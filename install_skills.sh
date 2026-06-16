@@ -21,7 +21,7 @@ set -eu
 # 仓库URL（如果远程安装）
 REPO_URL="${HYDROGEN_EXPERIMENT_REPO_URL:-https://github.com/YOUR_USER/experiment-skill.git}"
 SKILL_NAME="hydrogen-experiment"
-COMMAND_NAME="hydrogen"
+COMMAND_NAME="hydrogen-experiment"
 
 # 本地安装时使用当前目录
 if [ -f "$(dirname "$0")/skills/hydrogen_experiment/skill.md" ]; then

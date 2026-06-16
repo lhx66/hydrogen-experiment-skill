@@ -1,0 +1,48 @@
+# Python源代码（不上传，只保留打包的exe）
+*.py
+!install_skills.sh
+
+# 构建临时文件
+build/
+*.spec
+__pycache__/
+*.pyc
+*.pyo
+
+# 实验数据目录
+experiments/
+
+# 分析工具源代码和构建文件
+analysis/*.py
+analysis/build/
+analysis/dist/
+
+# CLI工具源代码和构建文件（保留打包的exe）
+cli_tools/*.py
+cli_tools/build/
+cli_tools/*.spec
+!cli_tools/dist/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# IDE配置
+.idea/
+.vscode/
+*.code-workspace
+
+# Python虚拟环境
+venv/
+env/
+.venv/
+
+# 日志文件
+*.log
+
+# 临时文件
+*.tmp
+*.bak
+*~
