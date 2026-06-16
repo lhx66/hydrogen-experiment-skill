@@ -1,6 +1,12 @@
-# Python源代码（不上传，只保留打包的exe）
+# Python源代码（不上传）
 *.py
+
+# 保留安装脚本
 !install_skills.sh
+
+# 保留打包的exe文件
+!cli_tools/dist/*.exe
+!analysis/dist/*.exe
 
 # 构建临时文件
 build/
@@ -11,17 +17,6 @@ __pycache__/
 
 # 实验数据目录
 experiments/
-
-# 分析工具源代码和构建文件
-analysis/*.py
-analysis/build/
-analysis/dist/
-
-# CLI工具源代码和构建文件（保留打包的exe）
-cli_tools/*.py
-cli_tools/build/
-cli_tools/*.spec
-!cli_tools/dist/
 
 # 系统文件
 .DS_Store
