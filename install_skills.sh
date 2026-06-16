@@ -1,27 +1,25 @@
 #!/bin/sh
-# install_skills.sh — 光纤氢气传感器实验自动化 Skill 全局安装脚本
-#
-# 用法:
-#   方式1: 本地安装
-#     cd /path/to/experiment-skill && ./install_skills.sh
-#
-#   方式2: 远程安装（需要Git仓库）
-#     curl -fsSL https://raw.githubusercontent.com/USER/REPO/main/install_skills.sh | sh
+# install_skills.sh — 光纤氢气传感器实验自动化 Skill 安装脚本
 #
 # 功能:
-#   1. 将Skill安装至全局路径 ~/.agents/skills/hydrogen-experiment
-#   2. 自动建立软链接到各 AI 平台（Claude Code, Cursor 等）
-#   3. 在 Claude Code 中注册 /hydrogen 斜杠命令
+#   1. 检测并安装 Python 3.8+
+#   2. 安装项目依赖包
+#   3. 将 Skill 安装至全局路径
+#   4. 注册 Claude Code 斜杠命令
+#
+# 用法:
+#   bash install_skills.sh
 
-set -eu
+set -e
 
 # ---------------------------------------------------------------------------
 # 常量定义
 # ---------------------------------------------------------------------------
-# 仓库URL（如果远程安装）
 REPO_URL="${HYDROGEN_EXPERIMENT_REPO_URL:-https://github.com/YOUR_USER/experiment-skill.git}"
 SKILL_NAME="hydrogen-experiment"
 COMMAND_NAME="hydrogen-experiment"
+MIN_PYTHON_MAJOR=3
+MIN_PYTHON_MINOR=8
 
 # 本地安装时使用当前目录
 if [ -f "$(dirname "$0")/skills/hydrogen_experiment/skill.md" ]; then
@@ -33,6 +31,7 @@ else
 fi
 
 ACTIVE_SKILLS_DIR="$CANONICAL_DIR/skills/$SKILL_NAME"
+REQUIREMENTS_FILE="$CANONICAL_DIR/requirements.txt"
 
 # ---------------------------------------------------------------------------
 # 终端颜色输出
@@ -41,18 +40,111 @@ if [ -t 1 ]; then
     GREEN='\033[0;32m'
     YELLOW='\033[1;33m'
     BLUE='\033[0;34m'
+    RED='\033[0;31m'
     BOLD='\033[1m'
     NC='\033[0m'
 else
-    GREEN='' YELLOW='' BLUE='' BOLD='' NC=''
+    GREEN='' YELLOW='' BLUE='' RED='' BOLD='' NC=''
 fi
 
 info()    { printf "${BLUE}[INFO]${NC}  %s\n" "$1"; }
 success() { printf "${GREEN}[OK]${NC}    %s\n" "$1"; }
 warn()    { printf "${YELLOW}[WARN]${NC}  %s\n" "$1"; }
+error()   { printf "${RED}[ERROR]${NC} %s\n" "$1"; }
 
 # ---------------------------------------------------------------------------
-# 全局平台自动检测
+# 检测 Python 环境
+# ---------------------------------------------------------------------------
+check_python() {
+    info "检测 Python 环境..."
+
+    # 检测已安装的 Python
+    PYTHON_CMD=""
+    for cmd in python3 python python38 python39 python310 python311; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            PYTHON_VERSION=$($cmd -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+            PYTHON_MAJOR=$($cmd -c 'import sys; print(sys.version_info.major)')
+            PYTHON_MINOR=$($cmd -c 'import sys; print(sys.version_info.minor)')
+
+            if [ "$PYTHON_MAJOR" -ge "$MIN_PYTHON_MAJOR" ] && [ "$PYTHON_MINOR" -ge "$MIN_PYTHON_MINOR" ]; then
+                PYTHON_CMD="$cmd"
+                success "找到 Python $PYTHON_VERSION ($cmd)"
+                return 0
+            fi
+        fi
+    done
+
+    error "未找到 Python $MIN_PYTHON_MAJOR.$MIN_PYTHON_MINOR+"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# 安装 Python (不同平台)
+# ---------------------------------------------------------------------------
+install_python() {
+    warn "需要安装 Python $MIN_PYTHON_MAJOR.$MIN_PYTHON_MINOR+"
+
+    # 检测操作系统
+    if [ "$(uname -s)" = "Darwin" ]; then
+        # macOS
+        if command -v brew >/dev/null 2>&1; then
+            info "使用 Homebrew 安装 Python..."
+            brew install python@3.9
+        else
+            error "请先安装 Homebrew: https://brew.sh"
+            info "或手动安装 Python: https://www.python.org/downloads/"
+            exit 1
+        fi
+    elif [ -f /etc/debian_version ] || [ -f /etc/ubuntu_version ]; then
+        # Debian/Ubuntu
+        info "使用 apt 安装 Python..."
+        sudo apt update
+        sudo apt install -y python3.9 python3.9-venv python3-pip
+    elif [ -f /etc/redhat-release ]; then
+        # RHEL/CentOS/Fedora
+        info "使用 yum/dnf 安装 Python..."
+        if command -v dnf >/dev/null 2>&1; then
+            sudo dnf install -y python39 python39-pip
+        else
+            sudo yum install -y python39 python39-pip
+        fi
+    else
+        error "不支持的操作系统，请手动安装 Python: https://www.python.org/downloads/"
+        exit 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 安装 Python 依赖
+# ---------------------------------------------------------------------------
+install_python_dependencies() {
+    info "安装 Python 依赖包..."
+
+    if [ ! -f "$REQUIREMENTS_FILE" ]; then
+        warn "未找到 requirements.txt，跳过依赖安装"
+        return 0
+    fi
+
+    # 检查 pip
+    if ! $PYTHON_CMD -m pip --version >/dev/null 2>&1; then
+        info "安装 pip..."
+        if [ "$(uname -s)" = "Darwin" ]; then
+            $PYTHON_CMD -m ensurepip --upgrade
+        else
+            curl https://bootstrap.pypa.io/get-pip.py | $PYTHON_CMD
+        fi
+    fi
+
+    # 安装依赖
+    info "正在安装依赖包 (可能需要几分钟)..."
+    $PYTHON_CMD -m pip install --upgrade pip
+    $PYTHON_CMD -m pip install -r "$REQUIREMENTS_FILE"
+
+    success "Python 依赖安装完成"
+}
+
+# ---------------------------------------------------------------------------
+# 检测全局平台
 # ---------------------------------------------------------------------------
 detect_global_platforms() {
     platforms=""
@@ -62,9 +154,6 @@ detect_global_platforms() {
     echo "$platforms"
 }
 
-# ---------------------------------------------------------------------------
-# 解析平台存放路径
-# ---------------------------------------------------------------------------
 platform_path() {
     case "$1" in
         claude-code) echo "$HOME/.claude/skills/$SKILL_NAME" ;;
@@ -73,9 +162,6 @@ platform_path() {
     esac
 }
 
-# ---------------------------------------------------------------------------
-# 友好名称
-# ---------------------------------------------------------------------------
 platform_display() {
     case "$1" in
         claude-code) echo "Claude Code" ;;
@@ -85,7 +171,7 @@ platform_display() {
 }
 
 # ---------------------------------------------------------------------------
-# 创建软链接 (失败时降级为复制)
+# 创建软链接
 # ---------------------------------------------------------------------------
 create_symlink() {
     target="$1"
@@ -101,17 +187,48 @@ create_symlink() {
 }
 
 # ---------------------------------------------------------------------------
+# 设置 CLI 工具可执行权限
+# ---------------------------------------------------------------------------
+setup_cli_tools() {
+    info "设置 CLI 工具..."
+
+    # 确保 Python 脚本有执行权限
+    chmod +x "$CANONICAL_DIR/cli_tools"/*.py 2>/dev/null || true
+
+    # 创建工具目录的 PYTHONPATH 环境变量提示文件
+    cat > "$CANONICAL_DIR/cli_tools/env_setup.sh" << 'EOF'
+#!/bin/sh
+# CLI 工具环境设置
+# Source 此文件以设置正确的 PYTHONPATH
+
+export PYTHONPATH="${PYTHONPATH}:$(cd "$(dirname "$0")/../.." && pwd)/cli_tools"
+export PATH="${PATH}:$(cd "$(dirname "$0")" && pwd)"
+EOF
+
+    chmod +x "$CANONICAL_DIR/cli_tools/env_setup.sh"
+}
+
+# ---------------------------------------------------------------------------
 # 主执行流程
 # ---------------------------------------------------------------------------
 main() {
-    printf "\n${BOLD}光纤氢气传感器实验自动化 Skill — 全局安装程序${NC}\n\n"
+    printf "\n${BOLD}光纤氢气传感器实验自动化 Skill — 安装程序${NC}\n\n"
 
-    # 本地安装检查
+    # 1. 检测/安装 Python
+    if ! check_python; then
+        install_python
+        if ! check_python; then
+            error "Python 安装失败"
+            exit 1
+        fi
+    fi
+
+    # 2. 本地安装检查
     if [ "$LOCAL_INSTALL" = true ]; then
         info "本地安装模式: $CANONICAL_DIR"
     else
         if ! command -v git >/dev/null 2>&1; then
-            warn "未检测到 git 环境，请先安装 git 后再运行此脚本。"
+            warn "未检测到 git 环境，请先安装 git"
             exit 1
         fi
 
@@ -130,17 +247,20 @@ main() {
         fi
     fi
 
-    # 检查Skill文件是否存在
+    # 3. 检查 Skill 文件
     if [ ! -f "$ACTIVE_SKILLS_DIR/skill.md" ]; then
-        warn "未找到 Skill 文件: $ACTIVE_SKILLS_DIR/skill.md"
+        error "未找到 Skill 文件: $ACTIVE_SKILLS_DIR/skill.md"
         exit 1
     fi
+    success "Skill 核心文件准备完成"
 
-    success "Skill 核心文件准备完成。"
+    # 4. 安装 Python 依赖
+    install_python_dependencies
 
-    # =======================================================================
-    # 为 Claude Code 注册 /hydrogen 斜杠命令
-    # =======================================================================
+    # 5. 设置 CLI 工具
+    setup_cli_tools
+
+    # 6. 为 Claude Code 注册斜杠命令
     if [ -d "$HOME/.claude" ]; then
         info "正在为 Claude Code 生成 /$COMMAND_NAME 快捷指令..."
         mkdir -p "$HOME/.claude/commands"
@@ -149,7 +269,6 @@ main() {
         old_command_path="$HOME/.claude/commands/$COMMAND_NAME.md"
         if [ -e "$old_command_path" ]; then
             rm -f "$old_command_path"
-            success "已清理旧版斜杠命令"
         fi
 
         cat > "$HOME/.claude/commands/$COMMAND_NAME.md" << 'EOF'
@@ -165,12 +284,17 @@ description: 自动化执行光纤氢气传感器实验
 - "进行十次4%氢气测试，每次40秒，使用功率计测量"
 - "进行5次2%氢气测试，每次30秒，使用FBG测量"
 - "做三次1%氢气测试，每次20秒"
+
+重要：运行 CLI 工具前，需要先设置 PYTHONPATH：
+```bash
+cd /path/to/experiment-skill
+source cli_tools/env_setup.sh
+```
 EOF
         success "斜杠命令注册成功: /$COMMAND_NAME"
     fi
-    # =======================================================================
 
-    # 自动软链接分发
+    # 7. 分发到各平台
     platforms="$(detect_global_platforms)"
     installed=""
     count=0
@@ -184,16 +308,21 @@ EOF
         count=$((count + 1))
     done
 
-    # ---------------------------------------------------------------------------
-    # 安装完成总结
-    # ---------------------------------------------------------------------------
+    # 8. 安装完成总结
     printf "\n${BOLD}安装完成！${NC}\n\n"
 
     printf "${BOLD}使用方法：${NC}\n"
     printf "  1. 在项目中启动 claude\n"
     printf "  2. 使用斜杠命令：\n\n"
-    printf "    ${YELLOW}/hydrogen 进行十次4%氢气测试，每次40秒，使用功率计测量${NC}\n\n"
-    printf "  实验将在后台运行，不会阻塞agent。\n\n"
+    printf "    ${YELLOW}/$COMMAND_NAME 进行十次4%氢气测试，每次40秒，使用功率计测量${NC}\n\n"
+
+    printf "${BOLD}环境设置：${NC}\n"
+    printf "  首次使用前，设置 PYTHONPATH：\n"
+    printf "  ${GREEN}cd $(dirname "$CANONICAL_DIR")/$(basename "$CANONICAL_DIR")${NC}\n"
+    printf "  ${GREEN}source cli_tools/env_setup.sh${NC}\n\n"
+
+    printf "${BOLD}Python 版本：${NC}\n"
+    printf "  $PYTHON_VERSION\n\n"
 
     printf "${BOLD}Skill位置：${NC}\n"
     printf "  $ACTIVE_SKILLS_DIR\n\n"

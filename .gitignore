@@ -1,19 +1,23 @@
-# Python源代码（不上传）
-*.py
-
-# 保留安装脚本
-!install_skills.sh
-
-# 保留打包的exe文件
-!cli_tools/dist/*.exe
-!analysis/dist/*.exe
-
-# 构建临时文件
-build/
+# 打包的exe文件（不上传）
+*.exe
 *.spec
+
+# Python字节码
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+
+# 构建临时文件
+build/
+dist/
+*.egg-info/
+
+# 虚拟环境
+venv/
+env/
+.venv/
+venv_build/
 
 # 实验数据目录
 experiments/
@@ -28,11 +32,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.code-workspace
-
-# Python虚拟环境
-venv/
-env/
-.venv/
 
 # 日志文件
 *.log
