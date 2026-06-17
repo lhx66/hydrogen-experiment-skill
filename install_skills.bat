@@ -16,6 +16,8 @@ set "SKILL_DIR_NAME=hydrogen_experiment"
 set "COMMAND_NAME=hydrogen-experiment"
 set "MIN_PYTHON_VERSION=3.8"
 set "INSTALLER_VERSION=2026.06.17.1"
+set "PYTHONUTF8=1"
+set "PIP_DISABLE_PIP_VERSION_CHECK=1"
 
 set "LAUNCH_DIR=%~dp0"
 set "LAUNCH_DIR=%LAUNCH_DIR:~0,-1%"
@@ -146,8 +148,11 @@ if not exist "%REQUIREMENTS_FILE%" (
     goto :skip_deps
 )
 
-REM 升级 pip
+REM 尽量升级 pip；失败时继续使用当前 pip，避免环境内 pip 自身问题阻塞安装
 %PYTHON_CMD% -m pip install --upgrade pip
+if errorlevel 1 (
+    echo [WARN]  pip 升级失败，将继续使用当前 pip 安装依赖
+)
 
 REM 安装依赖
 %PYTHON_CMD% -m pip install -r "%REQUIREMENTS_FILE%"
