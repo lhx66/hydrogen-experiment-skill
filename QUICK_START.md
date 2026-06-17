@@ -62,7 +62,15 @@ python analysis\analyze_sensor_response.py *.csv --output sensor_A_H2-3percent_r
 
 ## 自动化Skill使用
 
-在Claude Code中使用：
+在 Claude Code 或 Codex 中可使用：
+
+```text
+/hydrogen-experiment 进行十次4%氢气测试，每次40秒，使用功率计测量
+```
+
+Codex 刚安装或更新后请先重启；也可以直接说“使用 hydrogen-experiment skill 进行十次4%氢气测试，每次40秒，使用功率计测量”。
+
+Python 中直接调用：
 
 ```python
 from skills.hydrogen_experiment.hydrogen_experiment import run_hydrogen_experiment
@@ -98,7 +106,7 @@ experiment-skill/
 ├── skills/
 │   └── hydrogen_experiment/
 │       ├── hydrogen_experiment.py
-│       └── skill.md
+│       └── SKILL.md
 └── experiments/                 # 实验数据保存位置
 ```
 

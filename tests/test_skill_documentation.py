@@ -3,10 +3,22 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL_MD = ROOT / "skills" / "hydrogen_experiment" / "skill.md"
+SKILL_DIR = ROOT / "skills" / "hydrogen_experiment"
+SKILL_MD = SKILL_DIR / "SKILL.md"
 
 
 class SkillDocumentationTests(unittest.TestCase):
+    def test_codex_skill_uses_required_filename_and_frontmatter(self):
+        names = {path.name for path in SKILL_DIR.iterdir()}
+
+        self.assertIn("SKILL.md", names)
+        self.assertNotIn("skill.md", names)
+
+        text = SKILL_MD.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("---\n"))
+        self.assertIn("name: hydrogen-experiment", text)
+        self.assertIn("description: Use when", text)
+
     def test_start_guidance_is_consolidated_and_complete(self):
         text = SKILL_MD.read_text(encoding="utf-8")
 

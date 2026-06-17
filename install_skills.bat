@@ -68,8 +68,9 @@ REM 2. 准备项目文件
 REM ========================================
 echo.
 echo [2/6] 准备项目文件...
+call :cleanup_old_skill
 
-if exist "%LAUNCH_DIR%\skills\%SKILL_DIR_NAME%\skill.md" (
+if exist "%LAUNCH_DIR%\skills\%SKILL_DIR_NAME%\SKILL.md" (
     set "PROJECT_DIR=%LAUNCH_DIR%"
     echo [OK]    本地安装模式: %LAUNCH_DIR%
 ) else (
@@ -99,13 +100,28 @@ if exist "%LAUNCH_DIR%\skills\%SKILL_DIR_NAME%\skill.md" (
             call :maybe_pause
             exit /b 1
         )
+        git clean -fdx
+        if errorlevel 1 (
+            popd
+            echo [ERROR] 仓库清理失败
+            call :maybe_pause
+            exit /b 1
+        )
         popd
     ) else (
         if exist "%CANONICAL_DIR%" (
-            echo [ERROR] 安装目录已存在但不是 Git 仓库: %CANONICAL_DIR%
-            echo         请删除该目录，或设置 HYDROGEN_EXPERIMENT_INSTALL_DIR 指向新的安装目录。
-            call :maybe_pause
-            exit /b 1
+            if exist "%CANONICAL_DIR%\skills\%SKILL_DIR_NAME%\SKILL.md" (
+                rmdir /s /q "%CANONICAL_DIR%"
+            ) else if exist "%CANONICAL_DIR%\skills\%SKILL_DIR_NAME%\skill.md" (
+                rmdir /s /q "%CANONICAL_DIR%"
+            ) else if exist "%CANONICAL_DIR%\install_skills.bat" (
+                rmdir /s /q "%CANONICAL_DIR%"
+            ) else (
+                echo [ERROR] 安装目录已存在但不是 Git 仓库: %CANONICAL_DIR%
+                echo         请删除该目录，或设置 HYDROGEN_EXPERIMENT_INSTALL_DIR 指向新的安装目录。
+                call :maybe_pause
+                exit /b 1
+            )
         )
         for %%D in ("%CANONICAL_DIR%\..") do set "CANONICAL_PARENT=%%~fD"
         if not exist "!CANONICAL_PARENT!" mkdir "!CANONICAL_PARENT!"
@@ -129,8 +145,8 @@ REM ========================================
 echo.
 echo [3/6] 检查 Skill 文件...
 
-if not exist "%SKILLS_DIR%\skill.md" (
-    echo [ERROR] 未找到 Skill 文件: %SKILLS_DIR%\skill.md
+if not exist "%SKILLS_DIR%\SKILL.md" (
+    echo [ERROR] 未找到 Skill 文件: %SKILLS_DIR%\SKILL.md
     call :maybe_pause
     exit /b 1
 )
@@ -199,10 +215,10 @@ if exist "%USERPROFILE%\.codex" call :copy_skill "%USERPROFILE%\.codex\skills\%S
 if exist "%USERPROFILE%\.cursor" call :copy_skill "%USERPROFILE%\.cursor\rules\%SKILL_NAME%" "Cursor"
 
 REM ========================================
-REM 6. 注册 Claude Code 斜杠命令
+REM 6. 注册 Claude Code / Codex 斜杠命令
 REM ========================================
 echo.
-echo [6/6] 注册 Claude Code 斜杠命令...
+echo [6/6] 注册 Claude Code / Codex 斜杠命令...
 
 set "CLAUDE_DIR=%USERPROFILE%\.claude"
 set "COMMANDS_DIR=%CLAUDE_DIR%\commands"
@@ -216,7 +232,7 @@ echo ---
 echo description: 自动化执行光纤氢气传感器实验
 echo ---
 echo.
-echo 请先读取并严格遵循 `%SKILLS_DIR%\skill.md` 中的守则。
+echo 请先读取并严格遵循 `%SKILLS_DIR%\SKILL.md` 中的守则。
 echo.
 echo 然后解析用户的实验请求（自然语言），并询问实验结果保存文件夹。
 echo.
@@ -237,6 +253,38 @@ echo ```
     echo [WARN]  未找到 Claude Code 目录，跳过命令注册
 )
 
+set "CODEX_DIR=%USERPROFILE%\.codex"
+set "CODEX_COMMANDS_DIR=%USERPROFILE%\.codex\commands"
+
+if exist "%CODEX_DIR%" (
+    if not exist "%CODEX_COMMANDS_DIR%" mkdir "%CODEX_COMMANDS_DIR%"
+
+    (
+echo ---
+echo description: 自动化执行光纤氢气传感器实验
+echo ---
+echo.
+echo 请先读取并严格遵循 `%SKILLS_DIR%\SKILL.md` 中的守则。
+echo.
+echo 然后使用 hydrogen-experiment skill 解析用户的实验请求（自然语言），并询问实验结果保存文件夹。
+echo.
+echo 支持的自然语言请求示例：
+echo - "进行十次4%%氢气测试，每次40秒，使用功率计测量"
+echo - "进行5次2%%氢气测试，每次30秒，使用FBG测量"
+echo - "做三次1%%氢气测试，每次20秒"
+echo.
+echo 重要：运行 CLI 工具前，需要先设置 PYTHONPATH：
+echo ```batch
+echo cd /d "%PROJECT_DIR%"
+echo cli_tools\env_setup.bat
+echo ```
+    ) > "%CODEX_COMMANDS_DIR%\%COMMAND_NAME%.md"
+
+    echo [OK]    注册 Codex 斜杠命令成功: /%COMMAND_NAME%
+) else (
+    echo [WARN]  未找到 Codex 目录，跳过 Codex 命令注册
+)
+
 REM ========================================
 REM 安装完成
 REM ========================================
@@ -246,7 +294,7 @@ echo  安装完成！
 echo ======================================
 echo.
 echo 使用方法：
-echo   1. 打开 Claude Code
+echo   1. 重启 Claude Code 或 Codex
 echo   2. 使用斜杠命令：
 echo.
 echo     /%COMMAND_NAME% 进行十次4%%氢气测试，每次40秒，使用功率计测量
@@ -259,7 +307,7 @@ echo   cli_tools\env_setup.bat
 echo.
 echo Skill 位置：%SKILLS_DIR%
 echo.
-echo 详细文档请查看: %SKILLS_DIR%\skill.md
+echo 详细文档请查看: %SKILLS_DIR%\SKILL.md
 echo.
 call :maybe_pause
 exit /b 0
@@ -276,6 +324,28 @@ if errorlevel 1 (
 ) else (
     echo [OK]    已分发至 %PLATFORM_NAME%: %DEST_DIR%
 )
+exit /b 0
+
+:cleanup_old_skill
+echo [INFO]  清理旧版 Skill 和斜杠命令...
+call :remove_dir "%USERPROFILE%\.claude\skills\%SKILL_NAME%"
+call :remove_dir "%USERPROFILE%\.claude\skills\%SKILL_DIR_NAME%"
+call :remove_file "%USERPROFILE%\.claude\commands\%COMMAND_NAME%.md"
+call :remove_file "%USERPROFILE%\.claude\commands\%SKILL_DIR_NAME%.md"
+call :remove_dir "%USERPROFILE%\.codex\skills\%SKILL_NAME%"
+call :remove_dir "%USERPROFILE%\.codex\skills\hydrogen_experiment"
+call :remove_file "%USERPROFILE%\.codex\commands\%COMMAND_NAME%.md"
+call :remove_file "%USERPROFILE%\.codex\commands\hydrogen_experiment.md"
+call :remove_dir "%USERPROFILE%\.cursor\rules\%SKILL_NAME%"
+call :remove_dir "%USERPROFILE%\.cursor\rules\%SKILL_DIR_NAME%"
+exit /b 0
+
+:remove_dir
+if exist "%~1" rmdir /s /q "%~1"
+exit /b 0
+
+:remove_file
+if exist "%~1" del /f /q "%~1"
 exit /b 0
 
 :maybe_pause

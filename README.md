@@ -47,8 +47,11 @@ bash install_skills.sh
 安装脚本会自动：
 1. 检测并安装 Python 3.8+ (如未安装)
 2. 安装所需的 Python 依赖包
-3. 将 Skill 分发到已安装的 Claude Code、Codex 或 Cursor
-4. 注册 `/hydrogen-experiment` 斜杠命令 (如已安装 Claude Code)
+3. 清理旧版 hydrogen-experiment skill 和旧斜杠命令
+4. 将 Skill 分发到已安装的 Claude Code、Codex 或 Cursor
+5. 为 Claude Code 和 Codex 注册 `/hydrogen-experiment` 斜杠命令 (如已安装对应工具)
+
+安装完成后请重启 Codex 或 Claude Code，让新安装的 Skill 和斜杠命令重新加载。
 
 ## 系统架构
 
@@ -62,7 +65,7 @@ experiment-skill/
 ├── QUICK_START.md
 │
 ├── skills/hydrogen_experiment/
-│   ├── skill.md                        # Skill 定义文档
+│   ├── SKILL.md                        # Skill 定义文档
 │   └── hydrogen_experiment_async.py   # 异步执行脚本
 │
 ├── cli_tools/                          # CLI 工具 (Python 脚本)
@@ -98,13 +101,15 @@ cd /path/to/experiment-skill
 source cli_tools/env_setup.sh
 ```
 
-### 2. 使用 Claude Code 斜杠命令
+### 2. 使用 Agent 斜杠命令
 
-在 Claude Code 中直接输入：
+Claude Code 中使用 `/hydrogen-experiment`：
 
 ```
 /hydrogen-experiment 进行十次4%氢气测试，每次40秒，使用功率计测量
 ```
+
+Codex 中也可以使用 `/hydrogen-experiment` 唤起同一个实验流程。若刚刚安装或更新，请先重启 Codex；也可以直接说“使用 hydrogen-experiment skill 进行十次4%氢气测试，每次40秒，使用功率计测量”。
 
 ### 3. 直接使用 Python 脚本
 

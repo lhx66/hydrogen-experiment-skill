@@ -5,7 +5,7 @@
 #   1. 检测并安装 Python 3.8+
 #   2. 安装项目依赖包
 #   3. 将 Skill 安装至全局路径
-#   4. 注册 Claude Code 斜杠命令
+#   4. 注册 Claude Code / Codex 斜杠命令
 #
 # 用法:
 #   bash install_skills.sh
@@ -26,7 +26,7 @@ MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=8
 
 # 本地安装时使用当前目录
-if [ -f "$(dirname "$0")/skills/hydrogen_experiment/skill.md" ]; then
+if [ -f "$(dirname "$0")/skills/hydrogen_experiment/SKILL.md" ]; then
     CANONICAL_DIR="$(cd "$(dirname "$0")" && pwd)"
     LOCAL_INSTALL=true
 else
@@ -179,6 +179,25 @@ platform_display() {
 }
 
 # ---------------------------------------------------------------------------
+# 清理旧版 Skill 与斜杠命令
+# ---------------------------------------------------------------------------
+cleanup_old_skill() {
+    info "清理旧版 Skill 和斜杠命令..."
+    rm -rf "$HOME/.claude/skills/$SKILL_NAME"
+    rm -rf "$HOME/.claude/skills/$SKILL_DIR_NAME"
+    rm -f "$HOME/.claude/commands/$COMMAND_NAME.md"
+    rm -f "$HOME/.claude/commands/$SKILL_DIR_NAME.md"
+
+    rm -rf "$HOME/.codex/skills/$SKILL_NAME"
+    rm -rf "$HOME/.codex/skills/hydrogen_experiment"
+    rm -f "$HOME/.codex/commands/$COMMAND_NAME.md"
+    rm -f "$HOME/.codex/commands/hydrogen_experiment.md"
+
+    rm -rf "$HOME/.cursor/rules/$SKILL_NAME"
+    rm -rf "$HOME/.cursor/rules/$SKILL_DIR_NAME"
+}
+
+# ---------------------------------------------------------------------------
 # 创建软链接
 # ---------------------------------------------------------------------------
 create_symlink() {
@@ -234,6 +253,8 @@ main() {
         fi
     fi
 
+    cleanup_old_skill
+
     # 2. 本地安装检查
     if [ "$LOCAL_INSTALL" = true ]; then
         info "本地安装模式: $CANONICAL_DIR"
@@ -250,7 +271,18 @@ main() {
             git remote set-url origin "$REPO_URL"
             git fetch origin main
             git reset --hard origin/main
+            git clean -fdx
         else
+            if [ -e "$CANONICAL_DIR" ] && [ ! -d "$CANONICAL_DIR/.git" ]; then
+                if [ -f "$CANONICAL_DIR/skills/$SKILL_DIR_NAME/SKILL.md" ] ||
+                   [ -f "$CANONICAL_DIR/skills/$SKILL_DIR_NAME/skill.md" ] ||
+                   [ -f "$CANONICAL_DIR/install_skills.sh" ]; then
+                    rm -rf "$CANONICAL_DIR"
+                else
+                    error "安装目录已存在但不是 Git 仓库: $CANONICAL_DIR"
+                    exit 1
+                fi
+            fi
             info "正在克隆远程仓库: $CANONICAL_DIR"
             mkdir -p "$(dirname "$CANONICAL_DIR")"
             rm -rf "$CANONICAL_DIR"
@@ -259,8 +291,8 @@ main() {
     fi
 
     # 3. 检查 Skill 文件
-    if [ ! -f "$ACTIVE_SKILLS_DIR/skill.md" ]; then
-        error "未找到 Skill 文件: $ACTIVE_SKILLS_DIR/skill.md"
+    if [ ! -f "$ACTIVE_SKILLS_DIR/SKILL.md" ]; then
+        error "未找到 Skill 文件: $ACTIVE_SKILLS_DIR/SKILL.md"
         exit 1
     fi
     success "Skill 核心文件准备完成"
@@ -271,7 +303,7 @@ main() {
     # 5. 设置 CLI 工具
     setup_cli_tools
 
-    # 6. 为 Claude Code 注册斜杠命令
+    # 6. 为 Claude Code / Codex 注册斜杠命令
     if [ -d "$HOME/.claude" ]; then
         info "正在为 Claude Code 生成 /$COMMAND_NAME 快捷指令..."
         mkdir -p "$HOME/.claude/commands"
@@ -282,12 +314,12 @@ main() {
             rm -f "$old_command_path"
         fi
 
-        cat > "$HOME/.claude/commands/$COMMAND_NAME.md" << 'EOF'
+        cat > "$HOME/.claude/commands/$COMMAND_NAME.md" << EOF
 ---
 description: 自动化执行光纤氢气传感器实验
 ---
 
-请先读取并严格遵循 `~/.agents/skills/hydrogen-experiment/skills/hydrogen_experiment/skill.md` 中的守则。
+请先读取并严格遵循 $ACTIVE_SKILLS_DIR/SKILL.md 中的守则。
 
 然后解析用户的实验请求（自然语言），并询问实验结果保存文件夹。
 
@@ -297,12 +329,39 @@ description: 自动化执行光纤氢气传感器实验
 - "做三次1%氢气测试，每次20秒"
 
 重要：运行 CLI 工具前，需要先设置 PYTHONPATH：
-```bash
+~~~bash
 cd /path/to/experiment-skill
 source cli_tools/env_setup.sh
-```
+~~~
 EOF
         success "斜杠命令注册成功: /$COMMAND_NAME"
+    fi
+
+    if [ -d "$HOME/.codex" ]; then
+        info "正在为 Codex 生成 /$COMMAND_NAME 快捷指令..."
+        mkdir -p "$HOME/.codex/commands"
+
+        cat > "$HOME/.codex/commands/$COMMAND_NAME.md" << EOF
+---
+description: 自动化执行光纤氢气传感器实验
+---
+
+请先读取并严格遵循 $ACTIVE_SKILLS_DIR/SKILL.md 中的守则。
+
+然后使用 hydrogen-experiment skill 解析用户的实验请求（自然语言），并询问实验结果保存文件夹。
+
+支持的自然语言请求示例：
+- "进行十次4%氢气测试，每次40秒，使用功率计测量"
+- "进行5次2%氢气测试，每次30秒，使用FBG测量"
+- "做三次1%氢气测试，每次20秒"
+
+重要：运行 CLI 工具前，需要先设置 PYTHONPATH：
+~~~bash
+cd "$CANONICAL_DIR"
+source cli_tools/env_setup.sh
+~~~
+EOF
+        success "注册 Codex 斜杠命令成功: /$COMMAND_NAME"
     fi
 
     # 7. 分发到各平台
@@ -323,7 +382,7 @@ EOF
     printf "\n${BOLD}安装完成！${NC}\n\n"
 
     printf "${BOLD}使用方法：${NC}\n"
-    printf "  1. 在项目中启动 claude\n"
+    printf "  1. 重启 Claude Code 或 Codex\n"
     printf "  2. 使用斜杠命令：\n\n"
     printf "    ${YELLOW}/$COMMAND_NAME 进行十次4%氢气测试，每次40秒，使用功率计测量${NC}\n\n"
 
@@ -347,7 +406,7 @@ EOF
         printf "\n"
     fi
 
-    printf "详细文档请查看: $ACTIVE_SKILLS_DIR/skill.md\n"
+    printf "详细文档请查看: $ACTIVE_SKILLS_DIR/SKILL.md\n"
 }
 
 main

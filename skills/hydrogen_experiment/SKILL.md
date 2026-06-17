@@ -1,3 +1,8 @@
+---
+name: hydrogen-experiment
+description: Use when automating optical fiber hydrogen sensor experiments with MFC gas-flow control, FBG demodulator or power-meter acquisition, hydrogen concentration safety checks, response-curve plotting, and experiment result reporting.
+---
+
 # 光纤氢气传感器实验自动化 Skill
 
 ## 启动前确认

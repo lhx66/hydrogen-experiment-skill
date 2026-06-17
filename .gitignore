@@ -37,6 +37,10 @@ Thumbs.db
 # 日志文件
 *.log
 
+# 安装脚本生成的本地环境设置
+cli_tools/env_setup.bat
+cli_tools/env_setup.sh
+
 # 临时文件
 *.tmp
 *.bak
