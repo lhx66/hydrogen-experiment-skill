@@ -15,6 +15,7 @@ set "SKILL_NAME=hydrogen-experiment"
 set "SKILL_DIR_NAME=hydrogen_experiment"
 set "COMMAND_NAME=hydrogen-experiment"
 set "MIN_PYTHON_VERSION=3.8"
+set "INSTALLER_VERSION=2026.06.17.1"
 
 set "LAUNCH_DIR=%~dp0"
 set "LAUNCH_DIR=%LAUNCH_DIR:~0,-1%"
@@ -28,6 +29,7 @@ echo.
 echo ======================================
 echo  光纤氢气传感器实验自动化 Skill
 echo  Windows 安装程序
+echo  Version %INSTALLER_VERSION%
 echo ======================================
 echo.
 
