@@ -46,7 +46,7 @@ for %%P in (python python3 python38 python39 python310 python311) do (
     if not errorlevel 1 (
         set "PYTHON_CMD=%%P"
         for /f "tokens=2" %%V in ('%%P --version 2^>^&1') do (
-            echo [OK]    找到 Python %%V (%%P)
+            echo [OK]    找到 Python %%V ^(%%P^)
         )
         goto :python_found
     )
@@ -108,7 +108,7 @@ if exist "%LAUNCH_DIR%\skills\%SKILL_DIR_NAME%\skill.md" (
             exit /b 1
         )
         for %%D in ("%CANONICAL_DIR%\..") do set "CANONICAL_PARENT=%%~fD"
-        if not exist "%CANONICAL_PARENT%" mkdir "%CANONICAL_PARENT%"
+        if not exist "!CANONICAL_PARENT!" mkdir "!CANONICAL_PARENT!"
         echo [INFO]  正在克隆远程仓库: %CANONICAL_DIR%
         git clone "%REPO_URL%" "%CANONICAL_DIR%"
         if errorlevel 1 (
