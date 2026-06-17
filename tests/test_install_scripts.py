@@ -21,7 +21,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("set \"REPO_URL=https://github.com/lhx66/hydrogen-experiment-skill.git\"", installer)
         self.assertIn("chcp 65001 >nul", installer)
         self.assertIn("set \"PYTHONUTF8=1\"", installer)
-        self.assertIn("pip 升级失败，将继续使用当前 pip 安装依赖", installer)
+        self.assertIn("HYDROGEN_EXPERIMENT_UPGRADE_PIP", installer)
         self.assertIn("HYDROGEN_EXPERIMENT_INSTALL_DIR", installer)
         self.assertIn("git clone", installer)
         self.assertIn("git fetch origin main", installer)
@@ -35,7 +35,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("*.bat -text", attributes)
         self.assertTrue(requirements.isascii())
         self.assertIn("export PYTHONUTF8=1", shell_installer)
-        self.assertIn("pip 升级失败，将继续使用当前 pip 安装依赖", shell_installer)
+        self.assertIn("HYDROGEN_EXPERIMENT_UPGRADE_PIP", shell_installer)
 
 
 if __name__ == "__main__":

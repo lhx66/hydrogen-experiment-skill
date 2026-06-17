@@ -148,10 +148,18 @@ if not exist "%REQUIREMENTS_FILE%" (
     goto :skip_deps
 )
 
-REM 尽量升级 pip；失败时继续使用当前 pip，避免环境内 pip 自身问题阻塞安装
-%PYTHON_CMD% -m pip install --upgrade pip
+REM 检查 pip；默认不强制升级，避免环境内 pip 自身问题阻塞安装
+%PYTHON_CMD% -m pip --version >nul 2>&1
 if errorlevel 1 (
-    echo [WARN]  pip 升级失败，将继续使用当前 pip 安装依赖
+    echo [INFO]  未检测到 pip，尝试通过 ensurepip 安装
+    %PYTHON_CMD% -m ensurepip --upgrade
+)
+
+if /I "%HYDROGEN_EXPERIMENT_UPGRADE_PIP%"=="1" (
+    %PYTHON_CMD% -m pip install --upgrade pip
+    if errorlevel 1 (
+        echo [WARN]  pip 升级失败，将继续使用当前 pip 安装依赖
+    )
 )
 
 REM 安装依赖

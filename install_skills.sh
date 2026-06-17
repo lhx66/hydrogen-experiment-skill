@@ -141,8 +141,10 @@ install_python_dependencies() {
 
     # 安装依赖
     info "正在安装依赖包 (可能需要几分钟)..."
-    if ! $PYTHON_CMD -m pip install --upgrade pip; then
-        warn "pip 升级失败，将继续使用当前 pip 安装依赖"
+    if [ "${HYDROGEN_EXPERIMENT_UPGRADE_PIP:-}" = "1" ]; then
+        if ! $PYTHON_CMD -m pip install --upgrade pip; then
+            warn "pip 升级失败，将继续使用当前 pip 安装依赖"
+        fi
     fi
     $PYTHON_CMD -m pip install -r "$REQUIREMENTS_FILE"
 
