@@ -91,8 +91,8 @@ class FBGCliTests(unittest.TestCase):
     def test_start_connects_before_acquiring_data(self):
         controller = FakeController()
         args = types.SimpleNamespace(
-            ip="192.168.1.1",
-            port=5000,
+            ip=None,
+            port=None,
             duration=2,
             filename="sensor1_test",
             channel=1,
@@ -104,7 +104,7 @@ class FBGCliTests(unittest.TestCase):
              redirect_stdout(io.StringIO()):
             self.fbg_cli.cmd_start(args, controller)
 
-        self.assertEqual(controller.connect_calls, [("192.168.1.1", 5000)])
+        self.assertEqual(controller.connect_calls, [("192.168.1.1", 1000)])
         self.assertEqual(len(FakeLogger.instances), 1)
         self.assertEqual(FakeLogger.instances[0].filename, "sensor1_test.csv")
         self.assertTrue(FakeLogger.instances[0].started)

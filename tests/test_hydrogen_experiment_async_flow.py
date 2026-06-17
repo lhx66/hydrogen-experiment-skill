@@ -93,7 +93,50 @@ class HydrogenExperimentAsyncFlowTests(unittest.TestCase):
         output = stdout.getvalue()
         self.assertIn("![Cycle 1 - sensor_A (3%)](data:image/png;base64,abc123)", output)
 
-    def test_final_artifacts_display_in_agent_without_saving_by_default(self):
+    def test_fbg_single_cycle_passes_fixed_port_to_acquisition_process(self):
+        output_dir = ROOT / "tmp_test_output" / "async_fbg_port"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
+        skill = self.module.HydrogenExperimentSkill(output_folder=str(output_dir))
+
+        class FakeMfc:
+            addresses = [1, 2]
+
+            def set_flow(self, *args, **kwargs):
+                return True
+
+        class FakeProcess:
+            def wait(self, timeout=None):
+                return 0
+
+            def poll(self):
+                return 0
+
+        skill.mfc_controller = FakeMfc()
+
+        with patch.object(self.module.subprocess, "Popen", return_value=FakeProcess()) as popen:
+            with patch.object(self.module.time, "sleep"):
+                skill._run_single_cycle(
+                    cycle=1,
+                    experiment_path=output_dir,
+                    sensor_name="sensor_A",
+                    concentration="3%",
+                    h2_time=0,
+                    total_duration=0,
+                    h2_flow=30,
+                    mfc2_flow=1,
+                    instrument="fbg",
+                    fbg_ip="192.168.1.1",
+                    fbg_port=1000,
+                    fbg_channel=1,
+                )
+
+        command = popen.call_args.args[0]
+        self.assertIn("--port", command)
+        self.assertIn("1000", command)
+
+    def test_final_combined_plot_is_saved_and_json_displayed_by_default(self):
         output_dir = ROOT / "tmp_test_output" / "async_default_final"
         if output_dir.exists():
             shutil.rmtree(output_dir)
@@ -115,14 +158,13 @@ class HydrogenExperimentAsyncFlowTests(unittest.TestCase):
                 save_artifacts=False,
             )
 
-        self.assertTrue(results["combined_plot_displayed"])
+        self.assertTrue(results["combined_plot_saved"])
         self.assertTrue(results["json_displayed"])
-        self.assertNotIn("combined_plot", results)
+        self.assertIn("combined_plot", results)
         self.assertNotIn("result_file", results)
         self.assertFalse((output_dir / "experiment_results.json").exists())
-        self.assertEqual(list(output_dir.glob("*allcycles*.png")), [])
+        self.assertEqual(len(list(output_dir.glob("*allcycles*.png"))), 1)
         output = stdout.getvalue()
-        self.assertIn("![All Response Cycles", output)
         self.assertIn('"sensor_name": "sensor_A"', output)
 
 

@@ -126,8 +126,7 @@ class HydrogenExperimentFlowTests(unittest.TestCase):
             process = skill._start_fbg_acquisition(
                 filename=str(ROOT / "tmp_test_output" / "cycle1"),
                 duration=45,
-                fbg_ip="192.168.1.10",
-                channel=2,
+                channel=1,
             )
 
         self.assertEqual(process, "process")
@@ -136,13 +135,29 @@ class HydrogenExperimentFlowTests(unittest.TestCase):
         self.assertIn("fbg_cli.py", command[1])
         self.assertIn("start", command)
         self.assertIn("--ip", command)
-        self.assertIn("192.168.1.10", command)
+        self.assertIn("192.168.1.1", command)
+        self.assertIn("--port", command)
+        self.assertIn("1000", command)
         self.assertIn("--duration", command)
         self.assertIn("45", command)
         self.assertIn("--filename", command)
         self.assertIn(str(ROOT / "tmp_test_output" / "cycle1"), command)
         self.assertIn("--channel", command)
-        self.assertIn("2", command)
+        self.assertIn("1", command)
+
+    def test_powermeter_acquisition_uses_fixed_default_address(self):
+        skill = self.module.HydrogenExperimentSkill(output_folder=str(ROOT / "tmp_test_output"))
+
+        with patch.object(self.module.subprocess, "Popen", return_value="process") as popen:
+            process = skill._start_powermeter_acquisition(
+                filename=str(ROOT / "tmp_test_output" / "cycle1"),
+                duration=45,
+            )
+
+        self.assertEqual(process, "process")
+        command = popen.call_args.args[0]
+        self.assertIn("--resource", command)
+        self.assertIn("TCPIP0::192.169.1.102::inst0::INSTR", command)
 
     def test_cycle_plot_is_displayed_to_agent_without_saving_base64_in_result(self):
         skill = self.module.HydrogenExperimentSkill(output_folder=str(ROOT / "tmp_test_output"))
@@ -162,7 +177,7 @@ class HydrogenExperimentFlowTests(unittest.TestCase):
         output = stdout.getvalue()
         self.assertIn("![Cycle 1 - sensor_A (3%)](data:image/png;base64,abc123)", output)
 
-    def test_final_artifacts_display_in_agent_without_saving_by_default(self):
+    def test_final_combined_plot_is_saved_and_json_displayed_by_default(self):
         output_dir = ROOT / "tmp_test_output" / "sync_default_final"
         if output_dir.exists():
             shutil.rmtree(output_dir)
@@ -184,14 +199,13 @@ class HydrogenExperimentFlowTests(unittest.TestCase):
                 save_artifacts=False,
             )
 
-        self.assertTrue(results["combined_plot_displayed"])
+        self.assertTrue(results["combined_plot_saved"])
         self.assertTrue(results["json_displayed"])
-        self.assertNotIn("combined_plot", results)
+        self.assertIn("combined_plot", results)
         self.assertNotIn("result_file", results)
         self.assertFalse((output_dir / "experiment_results.json").exists())
-        self.assertEqual(list(output_dir.glob("*allcycles*.png")), [])
+        self.assertEqual(len(list(output_dir.glob("*allcycles*.png"))), 1)
         output = stdout.getvalue()
-        self.assertIn("![All Response Cycles", output)
         self.assertIn('"sensor_name": "sensor_A"', output)
 
     def test_final_artifacts_can_be_saved_when_user_requests_analysis_output(self):

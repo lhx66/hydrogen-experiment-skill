@@ -21,6 +21,9 @@ except ImportError:
     sys.exit(1)
 
 
+DEFAULT_POWERMETER_RESOURCE = 'TCPIP0::192.169.1.102::inst0::INSTR'
+
+
 def output_csv_filename(base):
     """返回CSV文件名，不自动追加时间戳。"""
     base = str(base)
@@ -82,7 +85,7 @@ class PowerInstrument:
             self.inst.write_termination = '\n'
 
             idn = self.inst.query("*IDN?")
-            print(f"✓ 设备ID: {idn.strip()}")
+            print(f"OK 设备ID: {idn.strip()}")
             return idn.strip()
         except Exception as e:
             raise RuntimeError(f"无法打开设备: {e}")
@@ -154,9 +157,9 @@ class DataLogger(Thread):
             self.csv_file = open(self.filename, 'w', newline='', encoding='utf-8-sig')
             self.csv_writer = csv.writer(self.csv_file)
             self.csv_writer.writerow(['elapsed_s', 'slot1_W', 'slot2_W', 'slot3_W', 'slot4_W'])
-            print(f"✓ 数据保存到: {self.filename}")
+            print(f"OK 数据保存到: {self.filename}")
         except Exception as e:
-            print(f"✗ 创建文件失败: {e}")
+            print(f"FAIL 创建文件失败: {e}")
             return
 
         try:
@@ -214,7 +217,7 @@ class DataLogger(Thread):
                     self.csv_file.flush()
                     os.fsync(self.csv_file.fileno())
                     self.csv_file.close()
-                    print(f"\n✓ 数据已保存: {self.filename} ({self.data_count} 个数据点)")
+                    print(f"\nOK 数据已保存: {self.filename} ({self.data_count} 个数据点)")
                 except:
                     pass
 
@@ -225,7 +228,7 @@ class DataLogger(Thread):
 
 def cmd_start(args):
     """启动采集命令"""
-    resource = args.resource
+    resource = args.resource or DEFAULT_POWERMETER_RESOURCE
     duration = args.duration or -1
     interval = args.interval or 0.1
     filename = args.filename or 'power_log'
@@ -243,7 +246,7 @@ def cmd_start(args):
         instrument = PowerInstrument(resource_str=resource, timeout_ms=5000)
         instrument.open()
     except Exception as e:
-        print(f"✗ 连接失败: {e}")
+        print(f"FAIL 连接失败: {e}")
         return
 
     # 状态显示
@@ -262,7 +265,7 @@ def cmd_start(args):
         logger.join()
 
     except KeyboardInterrupt:
-        print("\n\n⚠ 用户中断")
+        print("\n\nWARN 用户中断")
         logger.stop()
         print("正在停止采集...")
 
@@ -300,7 +303,7 @@ def main():
         epilog="""
 示例:
   %(prog)s list
-  %(prog)s start --resource TCPIP0::192.168.1.102::inst0::INSTR --duration 600 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-600s_powermeter_cycle01
+  %(prog)s start --duration 600 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-600s_powermeter_cycle01
         """
     )
 
@@ -311,7 +314,7 @@ def main():
 
     # start命令
     start_parser = subparsers.add_parser('start', help='开始采集')
-    start_parser.add_argument('--resource', required=True, help='VISA资源字符串')
+    start_parser.add_argument('--resource', default=DEFAULT_POWERMETER_RESOURCE, help='VISA资源字符串')
     start_parser.add_argument('--duration', type=float, default=-1, help='采集时长 (秒, -1表示无限)')
     start_parser.add_argument('--interval', type=float, default=0.1, help='采样间隔 (秒, 默认0.1)')
     start_parser.add_argument('--filename', help='保存文件名 (不含扩展名)')

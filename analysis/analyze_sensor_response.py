@@ -265,13 +265,18 @@ def analyze_sensor_data(csv_file, time_column='Relative_Time(s)',
     return result
 
 
-def batch_analyze(csv_files, output_json=None):
+def batch_analyze(csv_files, output_json=None, window_size=30, n_sigma=3,
+                  consecutive_n=5, value_column='Wavelength(nm)'):
     """
     批量分析多个CSV文件
 
     参数：
         csv_files: CSV文件列表
         output_json: 输出JSON文件路径（可选）
+        window_size: 响应检测窗口大小
+        n_sigma: 响应检测阈值倍数
+        consecutive_n: 连续超阈值点数
+        value_column: 待分析的数值列名
 
     返回：
         list: 分析结果列表
@@ -279,7 +284,13 @@ def batch_analyze(csv_files, output_json=None):
     results = []
 
     for csv_file in csv_files:
-        result = analyze_sensor_data(csv_file)
+        result = analyze_sensor_data(
+            csv_file,
+            window_size=window_size,
+            n_sigma=n_sigma,
+            consecutive_n=consecutive_n,
+            value_column=value_column,
+        )
         results.append(result)
 
     if output_json:
@@ -290,18 +301,18 @@ def batch_analyze(csv_files, output_json=None):
     return results
 
 
-def main():
+def _build_arg_parser():
     parser = argparse.ArgumentParser(
         description='传感器响应分析工具',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  %(prog)s data.csv
-  %(prog)s data.csv --window-size 50 --n-sigma 4
-  %(prog)s *.csv --output sensor_A_H2-3percent_response_summary.json
+  %(prog)s analyze data.csv
+  %(prog)s analyze data.csv --window-size 50 --n-sigma 4
+  %(prog)s analyze *.csv --output sensor_A_H2-3percent_response_summary.json
+  %(prog)s data.csv --output legacy_single_file.json
         """
     )
-
     parser.add_argument('files', nargs='+', help='CSV数据文件')
     parser.add_argument('--window-size', type=int, default=30, help='检测窗口大小 (默认30)')
     parser.add_argument('--n-sigma', type=float, default=3, help='Sigma阈值倍数 (默认3)')
@@ -309,13 +320,10 @@ def main():
     parser.add_argument('--value-column', default='Wavelength(nm)', help='数值列名')
     parser.add_argument('--output', help='输出JSON文件路径')
     parser.add_argument('--verbose', action='store_true', help='详细输出')
+    return parser
 
-    args = parser.parse_args()
 
-    # 批量分析
-    results = batch_analyze(args.files, args.output)
-
-    # 打印结果
+def _print_analysis_results(results):
     print("\n" + "=" * 60)
     print("分析结果")
     print("=" * 60)
@@ -332,7 +340,7 @@ def main():
         print(f"  基线: {result['baseline_mean']:.6f} ± {result['baseline_std']:.6f}")
 
         if result['has_response']:
-            print(f"  ✓ 检测到响应")
+            print(f"  OK 检测到响应")
             print(f"  响应幅度: {result['response_amplitude']:.6f}")
             print(f"  响应起始: {result['response_start_time']:.2f} 秒")
             if result.get('t90'):
@@ -343,9 +351,29 @@ def main():
             if result.get('estimated_concentration_percent'):
                 print(f"  估算浓度: {result['estimated_concentration_percent']}%")
         else:
-            print(f"  ✗ 未检测到响应")
+            print(f"  FAIL 未检测到响应")
 
     print("\n" + "=" * 60)
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'analyze':
+        argv = argv[1:]
+
+    parser = _build_arg_parser()
+    args = parser.parse_args(argv)
+
+    results = batch_analyze(
+        args.files,
+        args.output,
+        window_size=args.window_size,
+        n_sigma=args.n_sigma,
+        consecutive_n=args.consecutive_n,
+        value_column=args.value_column,
+    )
+    _print_analysis_results(results)
+    return 0
 
 
 def plot_response_curve(csv_file, result=None, title="Response Curve"):
@@ -512,4 +540,4 @@ def plot_multiple_cycles(cycle_files, output_path, title="All Response Cycles",
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

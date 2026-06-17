@@ -44,7 +44,9 @@ except ImportError:
 
 DEFAULT_MFC2_FLOW_SLM = 1.0
 DEFAULT_FBG_IP = '192.168.1.1'
+DEFAULT_FBG_PORT = 1000
 DEFAULT_FBG_CHANNEL = 1
+DEFAULT_POWERMETER_RESOURCE = 'TCPIP0::192.169.1.102::inst0::INSTR'
 HIGH_CONCENTRATION_AUTH_LIMIT_PERCENT = 4.0
 
 
@@ -281,6 +283,7 @@ class HydrogenExperimentSkill:
                         loop_interval: int = 60,
                         mfc_port: str = 'COM3',
                         fbg_ip: str = DEFAULT_FBG_IP,
+                        fbg_port: int = DEFAULT_FBG_PORT,
                         fbg_channel: int = DEFAULT_FBG_CHANNEL,
                         high_concentration_authorized: bool = False,
                         save_artifacts: bool = False) -> str:
@@ -327,6 +330,9 @@ class HydrogenExperimentSkill:
             'loop_count': loop_count,
             'instrument': instrument,
             'fbg_channel': fbg_channel if instrument == 'fbg' else None,
+            'fbg_ip': fbg_ip if instrument == 'fbg' else None,
+            'fbg_port': fbg_port if instrument == 'fbg' else None,
+            'powermeter_resource': DEFAULT_POWERMETER_RESOURCE if instrument == 'powermeter' else None,
             'high_concentration_authorized': bool(high_concentration_authorized),
             'status': 'running',
             'current_cycle': 0,
@@ -343,13 +349,13 @@ class HydrogenExperimentSkill:
             target=self._run_experiment_thread,
             args=(experiment_path, sensor_name, concentration, h2_time,
                   loop_count, instrument, total_duration, mfc2_flow,
-                  loop_interval, mfc_port, fbg_ip, fbg_channel,
+                  loop_interval, mfc_port, fbg_ip, fbg_port, fbg_channel,
                   save_artifacts),
             daemon=True
         )
         self.experiment_thread.start()
 
-        print(f"✓ 实验已启动 (ID: {experiment_id})")
+        print(f"OK 实验已启动 (ID: {experiment_id})")
         print(f"  实验在后台运行，不会阻塞agent")
         print(f"  状态文件: {experiment_path}/experiment_state.json")
 
@@ -367,6 +373,7 @@ class HydrogenExperimentSkill:
                               loop_interval: int,
                               mfc_port: str,
                               fbg_ip: str = DEFAULT_FBG_IP,
+                              fbg_port: int = DEFAULT_FBG_PORT,
                               fbg_channel: int = DEFAULT_FBG_CHANNEL,
                               save_artifacts: bool = False):
         """后台线程执行实验"""
@@ -390,9 +397,9 @@ class HydrogenExperimentSkill:
 
             # 连接测量仪器
             if instrument == "powermeter":
-                self._connect_powermeter('TCPIP0::192.168.1.102::inst0::INSTR')
+                self._connect_powermeter(DEFAULT_POWERMETER_RESOURCE)
             else:
-                self._connect_fbg(fbg_ip)
+                self._connect_fbg(fbg_ip, fbg_port)
 
             update_state({'status': 'running', 'message': f'开始实验，共{loop_count}次循环'})
 
@@ -415,6 +422,7 @@ class HydrogenExperimentSkill:
                     mfc2_flow=mfc2_flow,
                     instrument=instrument,
                     fbg_ip=fbg_ip,
+                    fbg_port=fbg_port,
                     fbg_channel=fbg_channel
                 )
 
@@ -486,58 +494,42 @@ class HydrogenExperimentSkill:
                                      sensor_name: str,
                                      concentration: str,
                                      save_artifacts: bool = False) -> Dict:
-        """Display final plot/JSON by default, or save them when explicitly requested."""
+        """Save the final combined plot by default; save JSON only on request."""
         saved = {'artifacts_saved': bool(save_artifacts)}
         results['artifacts_saved'] = bool(save_artifacts)
 
         if cycle_files:
             print("正在生成所有响应曲线...")
-            if save_artifacts:
-                artifact_stem = build_experiment_file_stem(
-                    sensor_name=sensor_name,
-                    concentration=concentration,
-                    h2_flow=results.get('h2_flow'),
-                    mfc2_flow=results.get('mfc2_flow'),
-                    h2_time=results.get('h2_time'),
-                    total_duration=results.get('total_duration'),
-                    instrument=results.get('instrument'),
-                    fbg_channel=results.get('fbg_channel'),
-                    suffix='allcycles',
-                )
-                combined_plot_name = f"{artifact_stem}.png"
-                combined_plot_path = experiment_path / combined_plot_name
+            artifact_stem = build_experiment_file_stem(
+                sensor_name=sensor_name,
+                concentration=concentration,
+                h2_flow=results.get('h2_flow'),
+                mfc2_flow=results.get('mfc2_flow'),
+                h2_time=results.get('h2_time'),
+                total_duration=results.get('total_duration'),
+                instrument=results.get('instrument'),
+                fbg_channel=results.get('fbg_channel'),
+                suffix='allcycles',
+            )
+            combined_plot_path = experiment_path / f"{artifact_stem}.png"
 
-                success = plot_multiple_cycles(
-                    cycle_files,
-                    str(combined_plot_path),
-                    title="All Response Cycles",
-                    sensor_name=sensor_name,
-                    concentration=concentration,
-                )
+            success = plot_multiple_cycles(
+                cycle_files,
+                str(combined_plot_path),
+                title="All Response Cycles",
+                sensor_name=sensor_name,
+                concentration=concentration,
+            )
 
-                if success:
-                    print(f"OK 合并图已保存: {combined_plot_path}")
-                    results['combined_plot'] = str(combined_plot_path)
-                    saved['combined_plot'] = str(combined_plot_path)
+            results['combined_plot_saved'] = bool(success)
+            if success:
+                print(f"OK 合并图已保存: {combined_plot_path}")
+                results['combined_plot'] = str(combined_plot_path)
+                saved['combined_plot'] = str(combined_plot_path)
             else:
-                plot_data = plot_multiple_cycles(
-                    cycle_files,
-                    None,
-                    title="All Response Cycles",
-                    sensor_name=sensor_name,
-                    concentration=concentration,
-                )
-                if plot_data:
-                    results['combined_plot_displayed'] = True
-                    plot_title = f"All Response Cycles - {sensor_name} ({concentration})"
-                    print("\n[All response cycles plot]")
-                    print(f"![{plot_title}](data:image/png;base64,{plot_data})")
-                    print("[/All response cycles plot]")
-                else:
-                    results['combined_plot_displayed'] = False
-                    print("WARN 合并响应曲线生成失败")
-        elif not save_artifacts:
-            results['combined_plot_displayed'] = False
+                print("WARN 合并响应曲线生成失败")
+        else:
+            results['combined_plot_saved'] = False
 
         if save_artifacts:
             result_stem = build_experiment_file_stem(
@@ -593,13 +585,13 @@ class HydrogenExperimentSkill:
         except:
             return False
 
-    def _connect_fbg(self, ip: str) -> bool:
+    def _connect_fbg(self, ip: str, port: int = DEFAULT_FBG_PORT) -> bool:
         """连接FBG"""
         if FBGDemodulator is None:
             return False
         controller = FBGDemodulator()
         try:
-            ok = controller.connect(ip, port=5000)
+            ok = controller.connect(ip, port=port)
             if ok:
                 controller.disconnect(send_stop=False)
             return ok
@@ -618,6 +610,7 @@ class HydrogenExperimentSkill:
                           mfc2_flow: float,
                           instrument: str,
                           fbg_ip: str = DEFAULT_FBG_IP,
+                          fbg_port: int = DEFAULT_FBG_PORT,
                           fbg_channel: int = DEFAULT_FBG_CHANNEL) -> Dict:
         """执行单次实验循环"""
         filename = build_experiment_file_stem(
@@ -645,7 +638,7 @@ class HydrogenExperimentSkill:
             if instrument == "powermeter":
                 data_process = subprocess.Popen([
                     sys.executable, str(self.powermeter_cli), 'start',
-                    '--resource', 'TCPIP0::192.168.1.102::inst0::INSTR',
+                    '--resource', DEFAULT_POWERMETER_RESOURCE,
                     '--duration', str(total_duration),
                     '--filename', str(experiment_path / filename)
                 ])
@@ -653,6 +646,7 @@ class HydrogenExperimentSkill:
                 data_process = subprocess.Popen([
                     sys.executable, str(self.fbg_cli), 'start',
                     '--ip', fbg_ip,
+                    '--port', str(fbg_port),
                     '--duration', str(total_duration),
                     '--filename', str(experiment_path / filename),
                     '--channel', str(fbg_channel)

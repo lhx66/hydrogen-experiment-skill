@@ -7,22 +7,26 @@ description: Use when automating optical fiber hydrogen sensor experiments with 
 
 ## 启动前确认
 
-AI必须先引导用户补齐并确认实验信息，不能直接连接设备、打开 MFC 或启动采集。每次实验至少确认：
+**优先使用总程序**：常规实验使用 `cli_tools/experiment_cli.py` 编排流程，不要手动拼接 MFC、FBG 或功率计命令。
 
-| 信息项 | 默认/规则 |
-|--------|-----------|
+AI必须先引导用户补齐并确认实验信息，不能直接连接设备、打开 MFC 或启动采集。**必须先确认实验结果保存文件夹、传感器名称、MFC串口、氢气浓度、循环次数和通氢时间**。
+
+**FBG 解调仪固定为 192.168.1.1:1000**。**功率计固定为 TCPIP0::192.169.1.102::inst0::INSTR**。不要向用户询问 FBG 解调仪地址、FBG 端口或功率计地址。
+
+## 参数确认
+
+| 信息项 | 规则 |
+| --- | --- |
 | 实验结果保存文件夹 | 必须询问；没有该路径不得启动实验。文件夹名称通常由用户指定并可包含日期。 |
-| 传感器名称 | 用户未提供时询问样品名或 sensor/FBG 编号。 |
+| 传感器名称 | 用户未提供时询问样品名、sensor 编号或 FBG 编号。 |
+| MFC串口 | 用户不确定时运行 `python cli_tools/mfc_cli.py connect --list`，根据串口名称推荐最可能的 MFC 端口，再交给用户确认。 |
+| 氢气浓度 | 必须由用户指定；4%不拦截，超过4.0% 进入安全授权流程。 |
 | 循环次数 | 用户未说明时提示默认 1 次并确认。 |
-| 氢气浓度 | 必须由用户指定；4%不拦截，超过4.0%见安全授权规则。 |
 | 每次通氢时间 | 用户未说明时提示默认 40 s 并确认。 |
 | 每轮记录总时长 | 默认通氢时间 + 30 s；需要更长恢复段时请用户指定。 |
-| MFC2载气流量 | 默认 1.0 slm，用于计算 MFC1 氢气流量。 |
-| MFC串口 | 用户不确定时运行 `mfc_cli.py connect --list`，根据串口名称推荐最可能的 MFC 端口，并把“推荐端口”交给用户确认。 |
-| 测量仪器 | 用户说 FBG、解调仪、波长时使用 FBG；否则按功率计流程确认。 |
-| FBG IP | 使用 FBG 时确认，默认 `192.168.1.1`。 |
+| MFC2载气流量 | 默认 1.0 slm，并基于此计算 MFC1 氢气流量。 |
+| 测量仪器 | 用户提到 FBG、解调仪、波长时使用 FBG；否则按功率计流程确认。 |
 | FBG通道 | 未指定 FBG 通道时默认采集通道 1；用户指定其他通道时使用指定值。 |
-| 功率计资源 | 使用功率计时确认 VISA 资源字符串。 |
 
 推荐开场：
 
@@ -30,15 +34,58 @@ AI必须先引导用户补齐并确认实验信息，不能直接连接设备、
 我先确认实验参数再启动设备。已识别：3%氢气、循环3次、每次20秒。
 还需要你确认：实验结果保存文件夹、传感器名称、MFC串口、测量仪器。
 默认值：MFC2载气=1.0 slm，因此MFC1氢气=30 sccm；每轮记录总时长=通氢时间+30秒。
+FBG 解调仪固定为 192.168.1.1:1000；功率计固定为 TCPIP0::192.169.1.102::inst0::INSTR，不再询问。
 ```
 
 ## 安全授权
 
-在得到明确的用户授权前，只允许运行4%及以下氢气浓度。4%不拦截；超过4.0% 的氢气浓度（例如 4.1%、5%）必须先停止启动流程，不得连接 MFC、不得打开 MFC1、不得启动 FBG 或功率计采集。
+在得到明确的用户授权前，只允许运行4%及以下氢气浓度。4%不拦截；**超过4.0% 的氢气浓度必须先获得明确授权**。
 
-如果用户请求超过4.0% 浓度，AI 必须先单独询问并获得明确授权；不能把用户原始请求里出现超过4%浓度本身视为授权。只有用户明确回复同意后，代码接口才允许设置 `high_concentration_authorized=True`。
+超过4.0% 的氢气浓度，例如 4.1% 或 5%，必须先停止启动流程，不得连接 MFC、不得打开 MFC1、不得启动 FBG 或功率计采集。不能把用户原始请求里出现超过4%浓度本身视为授权。
 
-## 流量计算
+只有用户单独明确回复同意后，代码接口才允许设置 `high_concentration_authorized=True`，命令行才允许追加 `--authorize-high-concentration`。
+
+## 调用总程序
+
+**先 dry-run，再正式运行**。dry-run 只打印 JSON 计划，不连接硬件；用户确认计划后，去掉 `--dry-run` 正式执行。
+
+```bash
+python cli_tools/experiment_cli.py run "进行3次3%氢气测试，每次20秒，使用FBG测量" --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --dry-run
+```
+
+确认后正式运行：
+
+```bash
+python cli_tools/experiment_cli.py run "进行3次3%氢气测试，每次20秒，使用FBG测量" --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A
+```
+
+用户明确要求保存最终分析 JSON 时追加：
+
+```bash
+--save-artifacts
+```
+
+超过4.0% 并且用户已单独明确授权时才追加：
+
+```bash
+--authorize-high-concentration
+```
+
+总程序会负责解析自然语言、连接 MFC、连接采集设备、设置 MFC 流量、等待稳定、启动数据记录、通氢、恢复和清理。
+
+## 阶段顺序
+
+总程序的 dry-run JSON 会列出 `steps`。执行和汇报时按以下阶段理解：
+
+1. **连接设备**：连接 MFC，并连接或检查 FBG/功率计。
+2. **打开MFC2载气**：设置 MFC2 载气流量，默认 1.0 slm。
+3. **等待稳定**：等待 MFC2 载气稳定后继续。
+4. **启动数据记录**：先启动 FBG 或功率计采集。
+5. **执行用户流程**：设置 MFC1 氢气流量并保持用户要求的通氢时间。
+6. **恢复阶段**：关闭 MFC1，继续记录到本轮记录总时长结束。
+7. **清理设备**：所有循环结束或异常时关闭 MFC1，再关闭 MFC2，并断开设备。
+
+## 流量与文件
 
 默认以 MFC2 载气流量 1.0 slm 为基准计算氢气流量：
 
@@ -48,19 +95,7 @@ MFC1氢气流量(sccm) = 氢气浓度(%) * MFC2载气流量(slm) * 10
 
 例如 MFC2=1.0 slm 时，1% 氢气对应 MFC1=10 sccm，3% 对应 30 sccm，4% 对应 40 sccm。
 
-## 文件命名
-
 文件名不添加时间戳，因为实验文件夹名称通常由用户指定并可包含日期。文件名必须包含关键实验信息，而不是只写传感器名和循环号。
-
-命名格式包含：
-- 传感器名称
-- 氢气浓度
-- MFC1 氢气流量
-- MFC2 载气流量
-- 通氢时间
-- 每轮记录总时长
-- 测量仪器和 FBG 通道
-- 循环编号或结果类型
 
 单轮 CSV 示例：
 
@@ -68,93 +103,57 @@ MFC1氢气流量(sccm) = 氢气浓度(%) * MFC2载气流量(slm) * 10
 sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_FBG-ch1_cycle01.csv
 ```
 
-用户明确要求保存分析结果时，合并图和 JSON 也使用同一命名规则，并以 `allcycles` 或 `results` 结尾。
+单轮图默认只打印到 agent 窗口中显示，不保存 PNG。**所有循环结束后的合并响应曲线图默认保存在实验文件夹中**。实验 JSON 默认只打印到 agent 窗口中显示，不保存本地文件。
 
-## 设备流程
+用户明确要求保存分析结果时，使用 `save_artifacts=True` 或命令行参数 `--save-artifacts` 保存最终 JSON，并报告合并响应曲线图和 JSON 路径。
 
-### MFC
+## 绘图和分析命令
 
-1. 询问用户 MFC 所在 COM 口。
-2. 用户不确定时运行：
-
-```bash
-python cli_tools/mfc_cli.py connect --list
-```
-
-3. 该命令会根据串口名称推荐最可能的 MFC 端口；把输出中的“推荐端口”作为建议告诉用户，请用户确认后再连接。
-4. 自动实验中使用 `MFCController` 保持长连接，不要用多个独立 `mfc_cli.py connect/set/close` 进程串起来控制同一次实验。
-5. 连接后设置 MFC1 和 MFC2 为数字控制模式。
-6. 先打开 MFC2 载气到目标流量，默认 1.0 slm，等待流量稳定。
-
-### FBG解调仪
-
-1. 确认 FBG 解调仪已开机，网线连接正常，电脑和解调仪在同一网段。
-2. 确认 IP，默认 `192.168.1.1`，端口默认 `5000`。
-3. 未指定 FBG 通道时默认采集通道 1。
-4. FBG 采集必须用同一个进程完成连接和采集：
+单组数据绘图，默认只打印图片到 agent 窗口：
 
 ```bash
-python cli_tools/fbg_cli.py start --ip 192.168.1.1 --duration 70 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_FBG-ch1_cycle01
+python analysis/plot_sensor_response.py sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_FBG-ch1_cycle01.csv --title "Cycle 1"
 ```
 
-不要把 `connect` 和 `start` 当作两个连续命令来采集数据；命令行进程结束后连接不会保留。`connect` 只用于连通性检查。
-
-### 功率计
-
-1. 确认 VISA 资源字符串。
-2. 可先列出设备：
+多组数据共同绘图，并保存 PNG：
 
 ```bash
-python cli_tools/powermeter_cli.py list
+python analysis/plot_sensor_response.py cycle01.csv cycle02.csv cycle03.csv --output sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_FBG-ch1_allcycles.png --title "All cycles"
 ```
 
-3. 采集命令示例：
+单组数据分析，并保存 JSON：
 
 ```bash
-python cli_tools/powermeter_cli.py start --resource TCPIP0::192.168.1.102::inst0::INSTR --duration 70 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_powermeter_cycle01
+python analysis/analyze_sensor_response.py analyze cycle01.csv --output sensor_A_H2-3percent_cycle01_response.json
 ```
 
-## 自动实验流程
+多组数据分析，并保存 JSON：
 
-1. 解析请求并向用户确认所有启动前信息。
-2. 计算 MFC1 氢气流量。
-3. 使用用户指定的保存文件夹；实验子目录和文件名不追加时间戳。
-4. 连接 MFC，打开 MFC2 载气并等待稳定。
-5. 连接或检查测量仪器。
-6. 每个循环先启动采集，再打开 MFC1 通氢，达到通氢时间后关闭 MFC1，并继续记录恢复段到本轮记录总时长结束。
-7. 每轮结束后分析 CSV，生成单轮响应曲线预览并直接输出到 agent 窗口；单轮响应曲线不保存为 PNG，也不把 base64 图像写入结果。
-8. 非最后一轮时等待循环间隔，默认 60 s。
-9. 所有循环结束后先关闭 MFC1，再按用户要求处理 MFC2。
-10. 默认不保存最终合并响应曲线图和实验 JSON，只打印到 agent 窗口中显示。用户明确要求保存分析结果时，使用 `save_artifacts=True` 保存合并响应曲线图和 JSON。
+```bash
+python analysis/analyze_sensor_response.py analyze cycle01.csv cycle02.csv cycle03.csv --output sensor_A_H2-3percent_response_summary.json
+```
+
+省略 `--output` 时，分析结果只打印到 agent 窗口。
 
 ## 完成后报告
 
-每次循环后报告：
-- CSV 文件路径
-- 是否检测到响应
-- 响应幅度
-- t90
-- 信噪比
-- 单轮响应曲线预览
+每次循环后报告 CSV 文件路径、是否检测到响应、响应幅度、t90、信噪比和单轮响应曲线预览。
 
-实验完成后报告：
-- 合并响应曲线图预览
-- 实验 JSON 内容
-- 用户明确要求保存分析结果时，报告合并响应曲线图和 JSON 的保存路径
-- 是否所有设备已关闭
+所有循环结束后报告合并响应曲线图保存路径、实验 JSON 内容、设备是否已关闭。用户明确要求保存分析结果时，同时报告 JSON 保存路径。
 
-## 排查和安全
+## 排查与停止条件
 
 | 现象 | 优先检查 |
-|------|----------|
-| 找不到 MFC | 运行 `mfc_cli.py connect --list`，查看“推荐端口”并确认 COM 口和驱动。 |
+| --- | --- |
+| 找不到 MFC | 运行 `python cli_tools/mfc_cli.py connect --list`，查看推荐端口并确认 COM 口和驱动。 |
 | MFC1 设置失败 | 确认 MFC 长连接未断开、地址正确、MFC2 已稳定。 |
-| FBG没有数据 | 使用 `fbg_cli.py start --ip ...`，不要分开 connect/start；确认通道号。 |
-| FBG连接失败 | 确认 IP、网段、端口、防火墙和解调仪开机状态。 |
-| 分析找不到文件 | 检查文件名是否与关键实验信息一致，确认采集进程已经退出。 |
-| 响应曲线为空 | 检查 CSV 行数、通道号、采样是否发生在通氢前。 |
+| FBG没有数据 | 由总程序调用 `fbg_cli.py start`；确认 FBG 开机、网线、通道号和固定地址 `192.168.1.1:1000`。 |
+| FBG连接失败 | 确认电脑与 FBG 在同一网段，防火墙未拦截端口 1000。 |
+| 功率计连接失败 | 确认功率计固定地址 `TCPIP0::192.169.1.102::inst0::INSTR` 可达。 |
+| 分析找不到文件 | 检查采集进程是否结束，CSV 文件名是否包含关键实验信息。 |
+| 响应曲线为空 | 检查 CSV 行数、FBG 通道号、采样是否发生在通氢前。 |
 
-安全要求：
+安全停止条件：
 - MFC2 载气流量低于 0.1 slm 时，必须自动关闭 MFC1。
 - Ctrl+C 或异常中断时，必须先关闭 MFC1，再关闭 MFC2。
 - 不要在 MFC2 未打开或未稳定时打开 MFC1。

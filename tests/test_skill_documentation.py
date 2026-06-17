@@ -67,8 +67,9 @@ class SkillDocumentationTests(unittest.TestCase):
             "文件名不添加时间戳",
             "文件夹名称通常由用户指定并可包含日期",
             "sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_FBG-ch1_cycle01.csv",
-            "默认不保存最终合并响应曲线图和实验 JSON",
-            "只打印到 agent 窗口中显示",
+            "单轮图默认只打印到 agent 窗口中显示，不保存 PNG",
+            "所有循环结束后的合并响应曲线图默认保存在实验文件夹中",
+            "实验 JSON 默认只打印到 agent 窗口中显示",
             "用户明确要求保存分析结果",
             "save_artifacts=True",
         ]
@@ -79,6 +80,56 @@ class SkillDocumentationTests(unittest.TestCase):
 
         self.assertNotIn("{sensor}_{concentration}_{timestamp}", text)
         self.assertNotIn("experiment_results.json", text)
+
+    def test_skill_directs_agents_to_use_orchestrator_with_fixed_instrument_addresses(self):
+        text = SKILL_MD.read_text(encoding="utf-8")
+
+        required_phrases = [
+            "cli_tools/experiment_cli.py",
+            "python cli_tools/experiment_cli.py run",
+            "--dry-run",
+            "FBG 解调仪固定为 192.168.1.1:1000",
+            "功率计固定为 TCPIP0::192.169.1.102::inst0::INSTR",
+            "不要向用户询问 FBG 解调仪地址、FBG 端口或功率计地址",
+            "总程序会负责解析自然语言、连接 MFC、连接采集设备、设置 MFC 流量、等待稳定、启动数据记录、通氢、恢复和清理",
+        ]
+
+        for phrase in required_phrases:
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_skill_bolds_critical_agent_instructions(self):
+        text = SKILL_MD.read_text(encoding="utf-8")
+
+        required_bold_phrases = [
+            "**优先使用总程序**",
+            "**必须先确认实验结果保存文件夹、传感器名称、MFC串口、氢气浓度、循环次数和通氢时间**",
+            "**FBG 解调仪固定为 192.168.1.1:1000**",
+            "**功率计固定为 TCPIP0::192.169.1.102::inst0::INSTR**",
+            "**超过4.0% 的氢气浓度必须先获得明确授权**",
+            "**所有循环结束后的合并响应曲线图默认保存在实验文件夹中**",
+        ]
+
+        for phrase in required_bold_phrases:
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_skill_documents_plot_and_analysis_cli_usage(self):
+        text = SKILL_MD.read_text(encoding="utf-8")
+
+        required_phrases = [
+            "python analysis/plot_sensor_response.py",
+            "python analysis/analyze_sensor_response.py analyze",
+            "单组数据绘图",
+            "多组数据共同绘图",
+            "单组数据分析",
+            "多组数据分析",
+            "--output",
+        ]
+
+        for phrase in required_phrases:
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
 
 
 if __name__ == "__main__":

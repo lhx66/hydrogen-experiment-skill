@@ -98,10 +98,10 @@ class MFCController:
                 timeout=0.2
             )
             self.connected = True
-            print(f"✓ 已连接到 {port} (波特率: {baudrate})")
+            print(f"OK 已连接到 {port} (波特率: {baudrate})")
             return True
         except Exception as e:
-            print(f"✗ 连接失败: {e}")
+            print(f"FAIL 连接失败: {e}")
             return False
 
     def disconnect(self):
@@ -195,10 +195,10 @@ class MFCController:
         success2 = self.set_digital_mode(self.addresses[1])
 
         if success1 and success2:
-            print("✓ 所有MFC已设置为数字控制模式")
+            print("OK 所有MFC已设置为数字控制模式")
             return True
         else:
-            print("⚠ 部分MFC设置失败，但继续尝试")
+            print("WARN 部分MFC设置失败，但继续尝试")
             return True
 
     def start_monitoring(self, interval=0.2):
@@ -221,7 +221,7 @@ class MFCController:
                     # 安全检查：MFC2流量过低时关闭MFC1
                     if address == self.addresses[1] and self.safety_enabled:
                         if flow < self.mfc2_threshold:
-                            print(f"⚠ 安全触发：MFC2流量过低 ({flow:.3f} < {self.mfc2_threshold})，关闭MFC1")
+                            print(f"WARN 安全触发：MFC2流量过低 ({flow:.3f} < {self.mfc2_threshold})，关闭MFC1")
                             self.set_flow(self.addresses[0], 0)
                             if self.safety_callback:
                                 self.safety_callback('mfc2_low', flow)
@@ -382,9 +382,9 @@ def cmd_set(args, controller):
     unit = 'sccm' if address == controller.addresses[0] else 'slm'
 
     if controller.set_flow(address, flow):
-        print(f"✓ MFC{channel} (地址{address}) 流量设置为: {flow} {unit}")
+        print(f"OK MFC{channel} (地址{address}) 流量设置为: {flow} {unit}")
     else:
-        print(f"✗ 设置失败")
+        print(f"FAIL 设置失败")
 
 
 def cmd_read(args, controller):
@@ -408,7 +408,7 @@ def cmd_read(args, controller):
         unit = 'sccm' if address == controller.addresses[0] else 'slm'
         print(f"MFC{channel} (地址{address}): {flow:.3f} {unit}")
     else:
-        print(f"✗ 读取失败")
+        print(f"FAIL 读取失败")
 
 
 def cmd_close(args, controller):
@@ -423,7 +423,7 @@ def cmd_close(args, controller):
         # 关闭所有
         for addr in controller.addresses:
             controller.set_flow(addr, 0)
-        print("✓ 所有MFC已关闭")
+        print("OK 所有MFC已关闭")
     else:
         # 关闭指定
         if channel == 1:
@@ -434,7 +434,7 @@ def cmd_close(args, controller):
             address = channel
 
         controller.set_flow(address, 0)
-        print(f"✓ MFC{channel} (地址{address}) 已关闭")
+        print(f"OK MFC{channel} (地址{address}) 已关闭")
 
 
 def cmd_disconnect(args, controller):
@@ -481,7 +481,7 @@ def cmd_run_sequence(args, controller):
         # 1. 打开MFC2，等待稳定
         print(f"\n[步骤1] 打开MFC2到 {mfc2_flow} slm，等待 {pre_mfc2_time} 秒...")
         if not controller.set_flow(controller.addresses[1], mfc2_flow):
-            print("✗ 设置MFC2失败")
+            print("FAIL 设置MFC2失败")
             return
 
         # 等待MFC2稳定
@@ -498,7 +498,7 @@ def cmd_run_sequence(args, controller):
             # a. 打开MFC1（通氢气）
             print(f"  → 打开MFC1到 {mfc1_flow} sccm...")
             if not controller.set_flow(controller.addresses[0], mfc1_flow):
-                print("  ✗ 设置MFC1失败")
+                print("  FAIL 设置MFC1失败")
                 break
 
             # b. 等待指定时间
@@ -532,10 +532,10 @@ def cmd_run_sequence(args, controller):
         time.sleep(0.5)
         controller.set_flow(controller.addresses[1], 0)
 
-        print("\n✓ 实验流程执行完成!")
+        print("\nOK 实验流程执行完成!")
 
     except KeyboardInterrupt:
-        print("\n\n⚠ 用户中断，关闭所有MFC...")
+        print("\n\nWARN 用户中断，关闭所有MFC...")
         controller.set_flow(controller.addresses[0], 0)
         controller.set_flow(controller.addresses[1], 0)
         print("已安全关闭")

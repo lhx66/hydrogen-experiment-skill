@@ -321,17 +321,23 @@ description: 自动化执行光纤氢气传感器实验
 
 请先读取并严格遵循 $ACTIVE_SKILLS_DIR/SKILL.md 中的守则。
 
-然后解析用户的实验请求（自然语言），并询问实验结果保存文件夹。
+然后解析用户的实验请求（自然语言），并询问实验结果保存文件夹、传感器名称和 MFC 串口。
+优先调用总程序，不要手动拼接底层 MFC/FBG/功率计命令。
+
+固定设备地址：
+- FBG 解调仪：192.168.1.1:1000
+- 功率计：TCPIP0::192.169.1.102::inst0::INSTR
 
 支持的自然语言请求示例：
 - "进行十次4%氢气测试，每次40秒，使用功率计测量"
 - "进行5次2%氢气测试，每次30秒，使用FBG测量"
 - "做三次1%氢气测试，每次20秒"
 
-重要：运行 CLI 工具前，需要先设置 PYTHONPATH：
+推荐先 dry-run：
 ~~~bash
-cd /path/to/experiment-skill
+cd "$CANONICAL_DIR"
 source cli_tools/env_setup.sh
+python cli_tools/experiment_cli.py run "进行十次4%氢气测试，每次40秒，使用功率计测量" --output-folder "E:/experiments/2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --dry-run
 ~~~
 EOF
         success "斜杠命令注册成功: /$COMMAND_NAME"
@@ -348,17 +354,23 @@ description: 自动化执行光纤氢气传感器实验
 
 请先读取并严格遵循 $ACTIVE_SKILLS_DIR/SKILL.md 中的守则。
 
-然后使用 hydrogen-experiment skill 解析用户的实验请求（自然语言），并询问实验结果保存文件夹。
+然后使用 hydrogen-experiment skill 解析用户的实验请求（自然语言），并询问实验结果保存文件夹、传感器名称和 MFC 串口。
+优先调用总程序，不要手动拼接底层 MFC/FBG/功率计命令。
+
+固定设备地址：
+- FBG 解调仪：192.168.1.1:1000
+- 功率计：TCPIP0::192.169.1.102::inst0::INSTR
 
 支持的自然语言请求示例：
 - "进行十次4%氢气测试，每次40秒，使用功率计测量"
 - "进行5次2%氢气测试，每次30秒，使用FBG测量"
 - "做三次1%氢气测试，每次20秒"
 
-重要：运行 CLI 工具前，需要先设置 PYTHONPATH：
+推荐先 dry-run：
 ~~~bash
 cd "$CANONICAL_DIR"
 source cli_tools/env_setup.sh
+python cli_tools/experiment_cli.py run "进行十次4%氢气测试，每次40秒，使用功率计测量" --output-folder "E:/experiments/2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --dry-run
 ~~~
 EOF
         success "注册 Codex 斜杠命令成功: /$COMMAND_NAME"

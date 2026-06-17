@@ -69,12 +69,14 @@ experiment-skill/
 │   └── hydrogen_experiment_async.py   # 异步执行脚本
 │
 ├── cli_tools/                          # CLI 工具 (Python 脚本)
+│   ├── experiment_cli.py              # 实验总编排入口
 │   ├── mfc_cli.py                     # MFC 质量流量控制器
 │   ├── powermeter_cli.py              # 功率计数据采集
 │   └── fbg_cli.py                     # FBG 解调仪数据采集
 │
 └── analysis/                           # 分析工具
-    └── analyze_sensor_response.py     # 数据分析与绘图
+    ├── analyze_sensor_response.py     # 数据分析
+    └── plot_sensor_response.py        # 响应曲线绘图
 ```
 
 ## 使用方法
@@ -111,7 +113,25 @@ Claude Code 中使用 `/hydrogen-experiment`：
 
 Codex 中也可以使用 `/hydrogen-experiment` 唤起同一个实验流程。若刚刚安装或更新，请先重启 Codex；也可以直接说“使用 hydrogen-experiment skill 进行十次4%氢气测试，每次40秒，使用功率计测量”。
 
-### 3. 直接使用 Python 脚本
+### 3. 直接使用总程序
+
+总程序会编排连接设备、打开 MFC2 载气、等待稳定、启动数据记录、通氢、恢复和清理。建议先 dry-run 查看计划：
+
+```bash
+python cli_tools/experiment_cli.py run "进行十次4%氢气测试，每次40秒，使用功率计测量" --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --dry-run
+```
+
+确认后去掉 `--dry-run` 正式运行：
+
+```bash
+python cli_tools/experiment_cli.py run "进行十次4%氢气测试，每次40秒，使用功率计测量" --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A
+```
+
+固定设备地址：
+- FBG 解调仪：`192.168.1.1:1000`
+- 功率计：`TCPIP0::192.169.1.102::inst0::INSTR`
+
+### 4. 底层调试工具
 
 ```bash
 # MFC 控制
@@ -121,13 +141,16 @@ python cli_tools/mfc_cli.py set --channel 2 --flow 1.0
 python cli_tools/mfc_cli.py set --channel 1 --flow 30
 
 # 功率计采集
-python cli_tools/powermeter_cli.py start --resource TCPIP0::192.168.1.102::inst0::INSTR --duration 70 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_power_cycle01
+python cli_tools/powermeter_cli.py start --duration 70 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_power_cycle01
 
 # FBG 解调仪
-python cli_tools/fbg_cli.py start --ip 192.168.1.1 --duration 70 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_FBG-ch1_cycle01
+python cli_tools/fbg_cli.py start --duration 70 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_FBG-ch1_cycle01
 
 # 数据分析
-python analysis/analyze_sensor_response.py data.csv
+python analysis/analyze_sensor_response.py analyze data.csv
+
+# 响应曲线绘图
+python analysis/plot_sensor_response.py data.csv --title "Cycle 1"
 ```
 
 ## 工具说明
@@ -166,30 +189,34 @@ python cli_tools/mfc_cli.py run-sequence --mfc2-flow 1.0 --mfc1-flow 30 --mfc1-d
 python cli_tools/powermeter_cli.py list
 
 # 启动采集
-python cli_tools/powermeter_cli.py start --resource TCPIP0::192.168.1.102::inst0::INSTR --duration 600
+python cli_tools/powermeter_cli.py start --duration 600
 ```
 
 ### FBG 解调仪工具 (fbg_cli.py)
 
 8 通道波长数据采集工具（100Hz）
 
-注意：`connect` 命令只用于连通性检查。正式采集必须使用 `start --ip ...`，因为命令行进程结束后 TCP 连接不会保留。
+注意：`connect` 命令只用于连通性检查。正式采集必须使用 `start`，因为命令行进程结束后 TCP 连接不会保留。默认地址为 `192.168.1.1:1000`。
 
 ```bash
 # 连接并启动采集；connect只用于连通性检查，采集必须由start自连，未指定通道时默认通道1
-python cli_tools/fbg_cli.py start --ip 192.168.1.1 --duration 600 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-600s_FBG-ch1_cycle01
+python cli_tools/fbg_cli.py start --duration 600 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-600s_FBG-ch1_cycle01
 ```
 
-### 数据分析工具 (analyze_sensor_response.py)
-
-传感器响应数据分析与绘图工具
+### 数据分析与绘图工具
 
 ```bash
-# 分析单个文件
-python analysis/analyze_sensor_response.py data.csv
+# 单组数据分析
+python analysis/analyze_sensor_response.py analyze cycle01.csv --output sensor_A_H2-3percent_cycle01_response.json
 
-# 分析多个文件并生成报告
-python analysis/analyze_sensor_response.py *.csv --output sensor_A_H2-3percent_response_summary.json
+# 多组数据分析
+python analysis/analyze_sensor_response.py analyze cycle01.csv cycle02.csv cycle03.csv --output sensor_A_H2-3percent_response_summary.json
+
+# 单组数据绘图，默认只打印到 agent 窗口
+python analysis/plot_sensor_response.py cycle01.csv --title "Cycle 1"
+
+# 多组数据共同绘图并保存
+python analysis/plot_sensor_response.py cycle01.csv cycle02.csv cycle03.csv --output sensor_A_H2-3percent_allcycles.png --title "All cycles"
 ```
 
 ## 支持的自然语言请求
@@ -206,7 +233,7 @@ python analysis/analyze_sensor_response.py *.csv --output sensor_A_H2-3percent_r
 2. 询问实验结果保存文件夹；文件夹名称通常由用户指定并可包含日期
 3. 让用户确认 MFC COM 口；不确定时先列出串口
 4. 连接 MFC，设置数字控制模式，先打开 MFC2 载气并等待稳定
-5. 连接或检查测量仪器：功率计检查 VISA 资源，FBG 检查 IP
+5. 连接或检查测量仪器：FBG 固定 `192.168.1.1:1000`，功率计固定 `TCPIP0::192.169.1.102::inst0::INSTR`
 6. 执行每个循环：
    - 先启动功率计或 FBG 数据采集
    - 等待约 1 秒
@@ -217,10 +244,10 @@ python analysis/analyze_sensor_response.py *.csv --output sensor_A_H2-3percent_r
    - 分析 CSV，并把本轮响应曲线直接输出到 agent 窗口
 7. 非最后一轮时等待循环间隔，默认 60 秒
 8. 关闭所有设备：先关 MFC1，再关 MFC2
-9. 绘制所有循环的合并图，默认直接输出到 agent 窗口显示，不保存为图片文件
-10. 打印实验 JSON 到 agent 窗口；用户明确要求保存分析结果时，使用 `save_artifacts=True` 保存合并图和 JSON
+9. 绘制所有循环的合并图，并默认保存到实验文件夹
+10. 打印实验 JSON 到 agent 窗口；用户明确要求保存分析结果时，使用 `save_artifacts=True` 保存 JSON 并报告路径
 
-自动流程生成的文件名不添加时间戳，改为包含关键实验信息，例如 `sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_FBG-ch1_cycle01.csv`。用户要求保存分析结果时，合并响应曲线图和 JSON 也使用同一组关键信息，并分别追加 `allcycles` 与 `results` 标识。
+自动流程生成的文件名不添加时间戳，改为包含关键实验信息，例如 `sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_FBG-ch1_cycle01.csv`。最终合并响应曲线图使用同一组关键信息并追加 `allcycles` 标识；用户要求保存分析结果时，JSON 追加 `results` 标识。
 
 ## 数据分析指标
 

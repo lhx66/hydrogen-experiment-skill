@@ -1,8 +1,11 @@
 import importlib.util
+import io
 import sys
 import types
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +36,45 @@ class PowerMeterCliTests(unittest.TestCase):
             self.powermeter_cli.output_csv_filename("already.csv"),
             "already.csv",
         )
+
+    def test_start_uses_fixed_default_powermeter_address(self):
+        opened_resources = []
+
+        class FakeInstrument:
+            def __init__(self, resource_str=None, timeout_ms=5000):
+                opened_resources.append(resource_str)
+
+            def open(self):
+                return "fake"
+
+            def close(self):
+                return None
+
+        class FakeLogger:
+            def __init__(self, instrument, duration, interval, filename, status_callback=None):
+                self.duration = duration
+                self.interval = interval
+                self.filename = filename
+
+            def start(self):
+                return None
+
+            def join(self):
+                return None
+
+        args = types.SimpleNamespace(
+            resource=None,
+            duration=1,
+            interval=0.1,
+            filename="sensor_A_power",
+        )
+
+        with patch.object(self.powermeter_cli, "PowerInstrument", FakeInstrument), \
+             patch.object(self.powermeter_cli, "DataLogger", FakeLogger), \
+             redirect_stdout(io.StringIO()):
+            self.powermeter_cli.cmd_start(args)
+
+        self.assertEqual(opened_resources, ["TCPIP0::192.169.1.102::inst0::INSTR"])
 
 
 if __name__ == "__main__":

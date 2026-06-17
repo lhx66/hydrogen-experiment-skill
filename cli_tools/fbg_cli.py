@@ -16,6 +16,10 @@ from datetime import datetime
 import signal
 
 
+DEFAULT_FBG_IP = '192.168.1.1'
+DEFAULT_FBG_PORT = 1000
+
+
 class FBGDemodulator:
     """FBG解调仪通信类"""
 
@@ -30,7 +34,7 @@ class FBGDemodulator:
         self.packet_count = 0
         self.error_count = 0
 
-    def connect(self, ip, port=5000):
+    def connect(self, ip, port=DEFAULT_FBG_PORT):
         """连接设备"""
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -39,10 +43,10 @@ class FBGDemodulator:
             self.socket.settimeout(1.0)
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
             self.connected = True
-            print(f"✓ 已连接到 {ip}:{port}")
+            print(f"OK 已连接到 {ip}:{port}")
             return True
         except Exception as e:
-            print(f"✗ 连接失败: {e}")
+            print(f"FAIL 连接失败: {e}")
             return False
 
     def disconnect(self, send_stop=True):
@@ -187,10 +191,10 @@ class DataLogger:
             self.csv_file = open(self.filename, 'w', newline='', encoding='utf-8-sig')
             self.csv_writer = csv.writer(self.csv_file)
             self.csv_writer.writerow(['Timestamp', 'Relative_Time(s)', 'Wavelength(nm)', 'Channel'])
-            print(f"✓ 数据保存到: {self.filename}")
+            print(f"OK 数据保存到: {self.filename}")
             return True
         except Exception as e:
-            print(f"✗ 创建文件失败: {e}")
+            print(f"FAIL 创建文件失败: {e}")
             return False
 
     def stop(self):
@@ -200,7 +204,7 @@ class DataLogger:
                 self.csv_file.flush()
                 os.fsync(self.csv_file.fileno())
                 self.csv_file.close()
-                print(f"\n✓ 数据已保存: {self.filename} ({self.data_count} 个数据点)")
+                print(f"\nOK 数据已保存: {self.filename} ({self.data_count} 个数据点)")
             except:
                 pass
             self.csv_file = None
@@ -302,8 +306,8 @@ class AcquisitionThread(threading.Thread):
 
 def cmd_connect(args, controller):
     """连接命令"""
-    ip = args.ip
-    port = args.port or 5000
+    ip = args.ip or DEFAULT_FBG_IP
+    port = args.port or DEFAULT_FBG_PORT
 
     if controller.connect(ip, port):
         print("连接成功，可以使用 start 命令开始采集")
@@ -315,11 +319,8 @@ def cmd_start(args, controller):
     """启动采集命令"""
     opened_here = False
     if not controller.connected:
-        ip = getattr(args, "ip", None)
-        port = args.port or 5000
-        if not ip:
-            print("错误：请指定FBG解调仪IP (--ip 192.168.1.1)")
-            return
+        ip = getattr(args, "ip", None) or DEFAULT_FBG_IP
+        port = args.port or DEFAULT_FBG_PORT
         print(f"正在连接FBG解调仪: {ip}:{port}")
         if not controller.connect(ip, port):
             return
@@ -362,12 +363,12 @@ def cmd_start(args, controller):
         acquisition_thread.join()
 
         if duration > 0:
-            print(f"\n✓ 采集完成 ({duration} 秒)")
+            print(f"\nOK 采集完成 ({duration} 秒)")
         else:
-            print("\n✓ 采集已停止")
+            print("\nOK 采集已停止")
 
     except KeyboardInterrupt:
-        print("\n\n⚠ 用户中断")
+        print("\n\nWARN 用户中断")
         acquisition_thread.stop()
         print("正在停止采集...")
 
@@ -390,8 +391,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  %(prog)s connect --ip 192.168.1.1
-  %(prog)s start --ip 192.168.1.1 --duration 600 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-600s_FBG-ch1_cycle01 --channel 1
+  %(prog)s connect
+  %(prog)s start --duration 600 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-600s_FBG-ch1_cycle01 --channel 1
   %(prog)s disconnect
         """
     )
@@ -400,13 +401,13 @@ def main():
 
     # connect命令
     connect_parser = subparsers.add_parser('connect', help='连接设备')
-    connect_parser.add_argument('--ip', required=True, help='设备IP地址')
-    connect_parser.add_argument('--port', type=int, help='端口号 (默认5000)')
+    connect_parser.add_argument('--ip', default=DEFAULT_FBG_IP, help='设备IP地址 (默认192.168.1.1)')
+    connect_parser.add_argument('--port', type=int, default=DEFAULT_FBG_PORT, help='端口号 (默认1000)')
 
     # start命令
     start_parser = subparsers.add_parser('start', help='开始采集')
-    start_parser.add_argument('--ip', help='设备IP地址')
-    start_parser.add_argument('--port', type=int, help='端口号 (默认5000)')
+    start_parser.add_argument('--ip', default=DEFAULT_FBG_IP, help='设备IP地址 (默认192.168.1.1)')
+    start_parser.add_argument('--port', type=int, default=DEFAULT_FBG_PORT, help='端口号 (默认1000)')
     start_parser.add_argument('--duration', type=int, help='采集时长 (秒, 0表示无限)')
     start_parser.add_argument('--filename', help='保存文件名 (不含扩展名)')
     start_parser.add_argument('--channel', type=int, default=1, help='选择通道 (1-8, 默认1)')
