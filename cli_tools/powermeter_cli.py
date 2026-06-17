@@ -21,10 +21,10 @@ except ImportError:
     sys.exit(1)
 
 
-def timestamped_filename(base, ext=".csv"):
-    """生成带时间戳的文件名"""
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"{base}_{ts}{ext}"
+def output_csv_filename(base):
+    """返回CSV文件名，不自动追加时间戳。"""
+    base = str(base)
+    return base if base.lower().endswith('.csv') else f"{base}.csv"
 
 
 def parse_vals_from_string(s):
@@ -234,8 +234,8 @@ def cmd_start(args):
         print("错误：请指定VISA资源字符串 (--resource)")
         return
 
-    # 生成文件名
-    csv_filename = timestamped_filename(filename, ext=".csv")
+    # 生成文件名。实验文件夹通常已带日期，文件名保留实验条件信息即可。
+    csv_filename = output_csv_filename(filename)
 
     # 打开设备
     try:
@@ -300,7 +300,7 @@ def main():
         epilog="""
 示例:
   %(prog)s list
-  %(prog)s start --resource TCPIP0::192.168.1.102::inst0::INSTR --duration 600 --filename sensor1_test
+  %(prog)s start --resource TCPIP0::192.168.1.102::inst0::INSTR --duration 600 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-600s_powermeter_cycle01
         """
     )
 

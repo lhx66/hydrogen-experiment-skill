@@ -204,10 +204,10 @@ class MFCController:
     def start_monitoring(self, interval=0.2):
         """启动流量监控线程"""
         self.running = True
-        self.monitor_thread = Thread(target=self._monitor_loop, daemon=True)
+        self.monitor_thread = Thread(target=self._monitor_loop, args=(interval,), daemon=True)
         self.monitor_thread.start()
 
-    def _monitor_loop(self):
+    def _monitor_loop(self, interval=0.2):
         """监控循环"""
         channel = 0
         while self.running:
@@ -252,6 +252,72 @@ class MFCController:
 
 # ==================== 命令行接口 ====================
 
+def _port_text(port):
+    fields = [
+        getattr(port, 'device', ''),
+        getattr(port, 'name', ''),
+        getattr(port, 'description', ''),
+        getattr(port, 'manufacturer', ''),
+        getattr(port, 'product', ''),
+        getattr(port, 'hwid', ''),
+    ]
+    return ' '.join(str(field) for field in fields if field)
+
+
+def score_mfc_port(port):
+    """根据串口名称/描述给MFC候选端口打分。"""
+    text = _port_text(port).lower()
+    score = 0
+
+    positive_keywords = {
+        'mfc': 100,
+        'mass flow': 100,
+        'flow controller': 90,
+        'usb-serial': 70,
+        'usb serial': 70,
+        'usb to serial': 70,
+        'ch340': 65,
+        'ch341': 65,
+        'ftdi': 60,
+        'cp210': 60,
+        'silicon labs': 55,
+        'prolific': 50,
+        'pl2303': 50,
+        'wch': 45,
+    }
+    negative_keywords = {
+        'bluetooth': 80,
+        'modem': 50,
+        'printer': 50,
+        'debug': 35,
+        'communications port': 25,
+    }
+
+    for keyword, weight in positive_keywords.items():
+        if keyword in text:
+            score += weight
+
+    for keyword, weight in negative_keywords.items():
+        if keyword in text:
+            score -= weight
+
+    return score
+
+
+def recommend_mfc_port(ports):
+    """返回最可能的MFC串口；没有可靠线索时返回None。"""
+    if not ports:
+        return None
+
+    scored_ports = sorted(
+        ((score_mfc_port(port), port) for port in ports),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    best_score, best_port = scored_ports[0]
+    return best_port if best_score > 0 else None
+
+
 def list_ports():
     """列出可用串口"""
     ports = serial.tools.list_ports.comports()
@@ -262,6 +328,12 @@ def list_ports():
     print("可用串口:")
     for i, port in enumerate(ports):
         print(f"  {i+1}. {port.device} - {port.description}")
+
+    recommended = recommend_mfc_port(ports)
+    if recommended:
+        print(f"推荐端口: {recommended.device} - {recommended.description}")
+    else:
+        print("推荐端口: 无法根据串口名称判断，请人工确认")
 
     return ports
 
@@ -477,7 +549,7 @@ def main():
 示例:
   %(prog)s connect --port COM3
   %(prog)s set --channel 1 --flow 40
-  %(prog)s run-sequence --mfc2-flow 2.0 --mfc1-flow 40 --mfc1-duration 40 --loop-count 10
+  %(prog)s run-sequence --mfc2-flow 1.0 --mfc1-flow 30 --mfc1-duration 40 --loop-count 10
   %(prog)s disconnect
         """
     )

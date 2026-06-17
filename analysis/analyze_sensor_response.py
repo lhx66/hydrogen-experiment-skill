@@ -298,7 +298,7 @@ def main():
 示例:
   %(prog)s data.csv
   %(prog)s data.csv --window-size 50 --n-sigma 4
-  %(prog)s *.csv --output results.json
+  %(prog)s *.csv --output sensor_A_H2-3percent_response_summary.json
         """
     )
 
@@ -493,6 +493,14 @@ def plot_multiple_cycles(cycle_files, output_path, title="All Response Cycles",
         ax.legend(loc='best')
 
         plt.tight_layout()
+
+        if output_path is None:
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+            plt.close(fig)
+            buf.seek(0)
+            return base64.b64encode(buf.read()).decode('utf-8')
+
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
         plt.close(fig)
 

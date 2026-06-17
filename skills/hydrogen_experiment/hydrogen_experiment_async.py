@@ -20,10 +20,109 @@ from queue import Queue
 analysis_dir = Path(__file__).parent.parent.parent / "analysis"
 sys.path.insert(0, str(analysis_dir))
 
+# 添加cli_tools目录到路径
+cli_tools_dir = Path(__file__).parent.parent.parent / "cli_tools"
+sys.path.insert(0, str(cli_tools_dir))
+
 try:
     from analyze_sensor_response import analyze_sensor_data, plot_response_curve, plot_multiple_cycles
 except ImportError:
     print("警告: 无法导入分析模块")
+
+try:
+    from mfc_cli import MFCController
+except ImportError:
+    print("警告: 无法导入MFC控制模块")
+    MFCController = None
+
+try:
+    from fbg_cli import FBGDemodulator
+except ImportError:
+    print("警告: 无法导入FBG控制模块")
+    FBGDemodulator = None
+
+
+DEFAULT_MFC2_FLOW_SLM = 1.0
+DEFAULT_FBG_IP = '192.168.1.1'
+DEFAULT_FBG_CHANNEL = 1
+HIGH_CONCENTRATION_AUTH_LIMIT_PERCENT = 4.0
+
+
+def calculate_h2_flow_sccm(concentration_percent: float,
+                           mfc2_flow_slm: float = DEFAULT_MFC2_FLOW_SLM) -> float:
+    """按实验约定计算MFC1氢气流量：MFC2=1 slm时，1% H2 = 10 sccm。"""
+    return float(concentration_percent) * float(mfc2_flow_slm) * 10.0
+
+
+def parse_concentration_percent(concentration: str) -> float:
+    return float(str(concentration).replace('%', '').replace('％', '').strip())
+
+
+def format_concentration(value: float) -> str:
+    return f"{value:g}%"
+
+
+def _format_filename_number(value) -> str:
+    return f"{float(value):g}".replace('.', 'p')
+
+
+def _safe_filename_part(value) -> str:
+    text = str(value).strip().replace('%', 'percent').replace('％', 'percent')
+    safe_chars = []
+    for char in text:
+        if char.isalnum() or char in ('-', '_'):
+            safe_chars.append(char)
+        elif char == '.':
+            safe_chars.append('p')
+        else:
+            safe_chars.append('_')
+    return '_'.join(''.join(safe_chars).split('_')).strip('_') or 'unknown'
+
+
+def build_experiment_file_stem(sensor_name: str,
+                               concentration: str,
+                               h2_flow: Optional[float] = None,
+                               mfc2_flow: Optional[float] = None,
+                               h2_time: Optional[int] = None,
+                               total_duration: Optional[int] = None,
+                               instrument: Optional[str] = None,
+                               fbg_channel: Optional[int] = None,
+                               cycle: Optional[int] = None,
+                               suffix: Optional[str] = None) -> str:
+    """构造不带时间戳、包含关键实验信息的文件名主体。"""
+    parts = [
+        _safe_filename_part(sensor_name),
+        f"H2-{_safe_filename_part(concentration)}",
+    ]
+
+    if h2_flow is not None:
+        parts.append(f"MFC1-{_format_filename_number(h2_flow)}sccm")
+    if mfc2_flow is not None:
+        parts.append(f"MFC2-{_format_filename_number(mfc2_flow)}slm")
+    if h2_time is not None:
+        parts.append(f"H2time-{int(h2_time)}s")
+    if total_duration is not None:
+        parts.append(f"Record-{int(total_duration)}s")
+    if instrument:
+        instrument_label = 'FBG' if str(instrument).lower() == 'fbg' else _safe_filename_part(instrument)
+        if str(instrument).lower() == 'fbg' and fbg_channel is not None:
+            instrument_label = f"{instrument_label}-ch{int(fbg_channel)}"
+        parts.append(instrument_label)
+    if cycle is not None:
+        parts.append(f"cycle{int(cycle):02d}")
+    if suffix:
+        parts.append(_safe_filename_part(suffix))
+
+    return '_'.join(parts)
+
+
+def require_high_concentration_authorization(concentration_percent: float,
+                                             high_concentration_authorized: bool = False) -> None:
+    if concentration_percent > HIGH_CONCENTRATION_AUTH_LIMIT_PERCENT and not high_concentration_authorized:
+        concentration_text = format_concentration(concentration_percent)
+        raise PermissionError(
+            f"{concentration_text} 氢气浓度超过4%，需要用户明确授权后才能启动实验"
+        )
 
 
 class ExperimentState:
@@ -80,6 +179,7 @@ class HydrogenExperimentSkill:
         self.state_manager = None
         self.experiment_thread = None
         self.message_queue = Queue()  # 用于向agent传递消息
+        self.mfc_controller = None
 
     def parse_experiment_request(self, request: str) -> Optional[Dict]:
         """解析用户的实验请求"""
@@ -92,7 +192,7 @@ class HydrogenExperimentSkill:
             r'cycle\s*[=: ]\s*(\d+)',
         ]
         loop_count = 1
-        for pattern in cycle_patterns:
+        for pattern in loop_patterns:
             match = re.search(pattern, request, re.IGNORECASE)
             if match:
                 loop_count = int(match.group(1))
@@ -100,21 +200,33 @@ class HydrogenExperimentSkill:
 
         # 解析氢气浓度
         conc_patterns = [
-            r'(\d+)\s*[%％]\s*氢',
-            r'(\d+)\s*[%％]\s*H2',
-            r'氢\s*(\d+)\s*[%％]',
-            r'concentr?ation\s*[=: ]\s*(\d+)',
+            r'(\d+(?:\.\d+)?)\s*[%％]\s*氢',
+            r'(\d+(?:\.\d+)?)\s*[%％]\s*H2',
+            r'氢\s*(\d+(?:\.\d+)?)\s*[%％]',
+            r'concentr?ation\s*[=: ]\s*(\d+(?:\.\d+)?)',
         ]
         concentration = "未知"
-        conc_value = 0
+        conc_value = 0.0
         for pattern in conc_patterns:
             match = re.search(pattern, request, re.IGNORECASE)
             if match:
-                concentration = f"{match.group(1)}%"
-                conc_value = int(match.group(1))
+                conc_value = float(match.group(1))
+                concentration = format_concentration(conc_value)
                 break
 
-        h2_flow = conc_value * 10  # 1% ≈ 10 sccm
+        mfc2_flow = DEFAULT_MFC2_FLOW_SLM
+        mfc2_patterns = [
+            r'MFC2\s*(?:=|为|:)?\s*(\d+(?:\.\d+)?)\s*(?:slm|SLM)?',
+            r'载气(?:流量)?\s*(?:=|为|:)?\s*(\d+(?:\.\d+)?)\s*(?:slm|SLM)',
+            r'carrier(?:\s*flow)?\s*[=: ]\s*(\d+(?:\.\d+)?)',
+        ]
+        for pattern in mfc2_patterns:
+            match = re.search(pattern, request, re.IGNORECASE)
+            if match:
+                mfc2_flow = float(match.group(1))
+                break
+
+        h2_flow = calculate_h2_flow_sccm(conc_value, mfc2_flow)
 
         # 解析通氢时间
         time_patterns = [
@@ -152,6 +264,7 @@ class HydrogenExperimentSkill:
             'loop_count': loop_count,
             'concentration': concentration,
             'h2_flow': h2_flow,
+            'mfc2_flow': mfc2_flow,
             'h2_time': h2_time,
             'instrument': instrument,
             'sensor_name': sensor_name,
@@ -164,21 +277,38 @@ class HydrogenExperimentSkill:
                         loop_count: int,
                         instrument: str,
                         total_duration: Optional[int] = None,
-                        mfc2_flow: float = 2.0,
+                        mfc2_flow: float = DEFAULT_MFC2_FLOW_SLM,
                         loop_interval: int = 60,
-                        mfc_port: str = 'COM3') -> str:
+                        mfc_port: str = 'COM3',
+                        fbg_ip: str = DEFAULT_FBG_IP,
+                        fbg_channel: int = DEFAULT_FBG_CHANNEL,
+                        high_concentration_authorized: bool = False,
+                        save_artifacts: bool = False) -> str:
         """
         启动异步实验（立即返回，实验在后台运行）
 
         返回实验ID
         """
+        conc_value = parse_concentration_percent(concentration)
+        require_high_concentration_authorization(conc_value, high_concentration_authorized)
+
         # 计算总记录时长
         if total_duration is None:
             total_duration = h2_time + 30
 
-        # 生成实验ID和目录
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        experiment_id = f"{sensor_name}_{concentration.replace('%', 'percent')}_{timestamp}"
+        h2_flow = calculate_h2_flow_sccm(conc_value, mfc2_flow)
+
+        # 生成实验ID和目录。目录不再追加时间戳，日期通常由用户指定的父文件夹承载。
+        experiment_id = build_experiment_file_stem(
+            sensor_name=sensor_name,
+            concentration=concentration,
+            h2_flow=h2_flow,
+            mfc2_flow=mfc2_flow,
+            h2_time=h2_time,
+            total_duration=total_duration,
+            instrument=instrument,
+            fbg_channel=fbg_channel,
+        )
         experiment_path = self.base_dir / experiment_id
         experiment_path.mkdir(exist_ok=True)
 
@@ -190,10 +320,14 @@ class HydrogenExperimentSkill:
             'experiment_id': experiment_id,
             'sensor_name': sensor_name,
             'concentration': concentration,
-            'h2_flow': concentration.replace('%', '') + '0' if '%' in concentration else str(int(concentration.replace('%', '')) * 10),
+            'h2_flow': h2_flow,
+            'mfc2_flow': mfc2_flow,
             'h2_time': h2_time,
+            'total_duration': total_duration,
             'loop_count': loop_count,
             'instrument': instrument,
+            'fbg_channel': fbg_channel if instrument == 'fbg' else None,
+            'high_concentration_authorized': bool(high_concentration_authorized),
             'status': 'running',
             'current_cycle': 0,
             'total_cycles': loop_count,
@@ -209,7 +343,8 @@ class HydrogenExperimentSkill:
             target=self._run_experiment_thread,
             args=(experiment_path, sensor_name, concentration, h2_time,
                   loop_count, instrument, total_duration, mfc2_flow,
-                  loop_interval, mfc_port),
+                  loop_interval, mfc_port, fbg_ip, fbg_channel,
+                  save_artifacts),
             daemon=True
         )
         self.experiment_thread.start()
@@ -230,7 +365,10 @@ class HydrogenExperimentSkill:
                               total_duration: int,
                               mfc2_flow: float,
                               loop_interval: int,
-                              mfc_port: str):
+                              mfc_port: str,
+                              fbg_ip: str = DEFAULT_FBG_IP,
+                              fbg_channel: int = DEFAULT_FBG_CHANNEL,
+                              save_artifacts: bool = False):
         """后台线程执行实验"""
 
         def update_state(updates):
@@ -246,7 +384,7 @@ class HydrogenExperimentSkill:
             update_state({'status': 'connecting', 'message': '连接设备中...'})
 
             # 连接MFC
-            if not self._connect_mfc(mfc_port):
+            if not self._connect_mfc(mfc_port, mfc2_flow):
                 update_state({'status': 'error', 'message': 'MFC连接失败'})
                 return
 
@@ -254,7 +392,7 @@ class HydrogenExperimentSkill:
             if instrument == "powermeter":
                 self._connect_powermeter('TCPIP0::192.168.1.102::inst0::INSTR')
             else:
-                self._connect_fbg('192.168.1.1')
+                self._connect_fbg(fbg_ip)
 
             update_state({'status': 'running', 'message': f'开始实验，共{loop_count}次循环'})
 
@@ -273,8 +411,11 @@ class HydrogenExperimentSkill:
                     concentration=concentration,
                     h2_time=h2_time,
                     total_duration=total_duration,
-                    h2_flow=int(concentration.replace('%', '')) * 10 if '%' in concentration else int(concentration) * 10,
-                    instrument=instrument
+                    h2_flow=calculate_h2_flow_sccm(float(concentration.replace('%', '')), mfc2_flow),
+                    mfc2_flow=mfc2_flow,
+                    instrument=instrument,
+                    fbg_ip=fbg_ip,
+                    fbg_channel=fbg_channel
                 )
 
                 if cycle_result.get('data_file'):
@@ -287,7 +428,7 @@ class HydrogenExperimentSkill:
                     # 绘制响应曲线（保存到状态中）
                     plot_title = f"Cycle {cycle} - {sensor_name} ({concentration})"
                     plot_data = plot_response_curve(cycle_result['data_file'], analysis, plot_title)
-                    cycle_result['plot'] = plot_data
+                    self._display_cycle_plot(cycle_result, cycle, plot_data, plot_title)
 
                 # 更新循环结果
                 state = self.state_manager.load()
@@ -295,30 +436,23 @@ class HydrogenExperimentSkill:
                     state['cycles'].append(cycle_result)
                     self.state_manager.save(state)
 
-            # 绘制所有循环的合并图
-            if cycle_files:
-                update_state({'message': '绘制合并图中...'})
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                combined_plot_name = f"{sensor_name}_{concentration.replace('%', 'percent')}_allcycles_{timestamp}.png"
-                combined_plot_path = experiment_path / combined_plot_name
-
-                plot_multiple_cycles(
-                    cycle_files,
-                    str(combined_plot_path),
-                    title="All Response Cycles",
-                    sensor_name=sensor_name,
-                    concentration=concentration
-                )
-
-                update_state({'combined_plot': str(combined_plot_path)})
-
             # 实验完成
             self._cleanup()
-            update_state({
+            state = self.state_manager.load() or {}
+            state.update({
                 'status': 'completed',
                 'message': '实验完成！',
                 'end_time': datetime.now().isoformat()
             })
+            self._finalize_experiment_outputs(
+                results=state,
+                cycle_files=cycle_files,
+                experiment_path=experiment_path,
+                sensor_name=sensor_name,
+                concentration=concentration,
+                save_artifacts=save_artifacts,
+            )
+            self.state_manager.save(state)
 
         except Exception as e:
             self._cleanup()
@@ -328,22 +462,131 @@ class HydrogenExperimentSkill:
                 'error': str(e)
             })
 
-    def _connect_mfc(self, port: str) -> bool:
-        """连接MFC"""
-        try:
-            result = subprocess.run(
-                ['python', str(self.mfc_cli), 'connect', '--port', port],
-                capture_output=True, text=True, timeout=10
+    def _display_cycle_plot(self,
+                            cycle_result: Dict,
+                            cycle: int,
+                            plot_data: Optional[str],
+                            plot_title: str) -> bool:
+        """把单轮图输出到agent窗口，不把base64图像保存进状态文件。"""
+        if not plot_data:
+            cycle_result['plot_displayed'] = False
+            print(f"  WARN 循环 {cycle} 响应图生成失败")
+            return False
+
+        cycle_result['plot_displayed'] = True
+        print(f"\n[Cycle {cycle} response plot]")
+        print(f"![{plot_title}](data:image/png;base64,{plot_data})")
+        print(f"[/Cycle {cycle} response plot]")
+        return True
+
+    def _finalize_experiment_outputs(self,
+                                     results: Dict,
+                                     cycle_files: List[Tuple[int, str]],
+                                     experiment_path: Path,
+                                     sensor_name: str,
+                                     concentration: str,
+                                     save_artifacts: bool = False) -> Dict:
+        """Display final plot/JSON by default, or save them when explicitly requested."""
+        saved = {'artifacts_saved': bool(save_artifacts)}
+        results['artifacts_saved'] = bool(save_artifacts)
+
+        if cycle_files:
+            print("正在生成所有响应曲线...")
+            if save_artifacts:
+                artifact_stem = build_experiment_file_stem(
+                    sensor_name=sensor_name,
+                    concentration=concentration,
+                    h2_flow=results.get('h2_flow'),
+                    mfc2_flow=results.get('mfc2_flow'),
+                    h2_time=results.get('h2_time'),
+                    total_duration=results.get('total_duration'),
+                    instrument=results.get('instrument'),
+                    fbg_channel=results.get('fbg_channel'),
+                    suffix='allcycles',
+                )
+                combined_plot_name = f"{artifact_stem}.png"
+                combined_plot_path = experiment_path / combined_plot_name
+
+                success = plot_multiple_cycles(
+                    cycle_files,
+                    str(combined_plot_path),
+                    title="All Response Cycles",
+                    sensor_name=sensor_name,
+                    concentration=concentration,
+                )
+
+                if success:
+                    print(f"OK 合并图已保存: {combined_plot_path}")
+                    results['combined_plot'] = str(combined_plot_path)
+                    saved['combined_plot'] = str(combined_plot_path)
+            else:
+                plot_data = plot_multiple_cycles(
+                    cycle_files,
+                    None,
+                    title="All Response Cycles",
+                    sensor_name=sensor_name,
+                    concentration=concentration,
+                )
+                if plot_data:
+                    results['combined_plot_displayed'] = True
+                    plot_title = f"All Response Cycles - {sensor_name} ({concentration})"
+                    print("\n[All response cycles plot]")
+                    print(f"![{plot_title}](data:image/png;base64,{plot_data})")
+                    print("[/All response cycles plot]")
+                else:
+                    results['combined_plot_displayed'] = False
+                    print("WARN 合并响应曲线生成失败")
+        elif not save_artifacts:
+            results['combined_plot_displayed'] = False
+
+        if save_artifacts:
+            result_stem = build_experiment_file_stem(
+                sensor_name=sensor_name,
+                concentration=concentration,
+                h2_flow=results.get('h2_flow'),
+                mfc2_flow=results.get('mfc2_flow'),
+                h2_time=results.get('h2_time'),
+                total_duration=results.get('total_duration'),
+                instrument=results.get('instrument'),
+                fbg_channel=results.get('fbg_channel'),
+                suffix='results',
             )
-            return result.returncode == 0
-        except:
+            result_file = experiment_path / f"{result_stem}.json"
+            results['result_file'] = str(result_file)
+            with open(result_file, 'w', encoding='utf-8') as f:
+                json.dump(results, f, ensure_ascii=False, indent=2)
+            print(f"结果已保存: {result_file}")
+            saved['result_file'] = str(result_file)
+        else:
+            results['json_displayed'] = True
+            print("\n[Experiment JSON]")
+            print(json.dumps(results, ensure_ascii=False, indent=2))
+            print("[/Experiment JSON]")
+
+        return saved
+
+    def _connect_mfc(self, port: str, mfc2_flow: float = DEFAULT_MFC2_FLOW_SLM) -> bool:
+        """连接MFC"""
+        if MFCController is None:
+            return False
+        try:
+            self.mfc_controller = MFCController()
+            if not self.mfc_controller.connect(port, baudrate=9600):
+                return False
+            self.mfc_controller.start_monitoring(interval=0.5)
+            self.mfc_controller.init_mfc_mode()
+            if not self.mfc_controller.set_flow(self.mfc_controller.addresses[1], mfc2_flow):
+                print("警告: MFC2设置失败，继续尝试")
+            return True
+        except Exception as e:
+            print(f"MFC连接异常: {e}")
             return False
 
     def _connect_powermeter(self, resource: str) -> bool:
         """连接功率计"""
         try:
             subprocess.run(
-                ['python', str(self.powermeter_cli), 'list'],
+                [sys.executable, str(self.powermeter_cli), 'list'],
                 capture_output=True, text=True, timeout=10
             )
             return True
@@ -352,7 +595,17 @@ class HydrogenExperimentSkill:
 
     def _connect_fbg(self, ip: str) -> bool:
         """连接FBG"""
-        return True
+        if FBGDemodulator is None:
+            return False
+        controller = FBGDemodulator()
+        try:
+            ok = controller.connect(ip, port=5000)
+            if ok:
+                controller.disconnect(send_stop=False)
+            return ok
+        except Exception as e:
+            print(f"FBG连接异常: {e}")
+            return False
 
     def _run_single_cycle(self,
                           cycle: int,
@@ -362,10 +615,22 @@ class HydrogenExperimentSkill:
                           h2_time: int,
                           total_duration: int,
                           h2_flow: float,
-                          instrument: str) -> Dict:
+                          mfc2_flow: float,
+                          instrument: str,
+                          fbg_ip: str = DEFAULT_FBG_IP,
+                          fbg_channel: int = DEFAULT_FBG_CHANNEL) -> Dict:
         """执行单次实验循环"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{sensor_name}_{concentration.replace('%', 'percent')}_cycle{cycle}_{timestamp}"
+        filename = build_experiment_file_stem(
+            sensor_name=sensor_name,
+            concentration=concentration,
+            h2_flow=h2_flow,
+            mfc2_flow=mfc2_flow,
+            h2_time=h2_time,
+            total_duration=total_duration,
+            instrument=instrument,
+            fbg_channel=fbg_channel,
+            cycle=cycle,
+        )
         data_file = experiment_path / f"{filename}.csv"
 
         cycle_result = {
@@ -373,50 +638,105 @@ class HydrogenExperimentSkill:
             'filename': filename,
             'start_time': datetime.now().isoformat(),
         }
+        data_process = None
 
         try:
             # 启动数据采集
             if instrument == "powermeter":
-                subprocess.run([
-                    'python', str(self.powermeter_cli), 'start',
+                data_process = subprocess.Popen([
+                    sys.executable, str(self.powermeter_cli), 'start',
                     '--resource', 'TCPIP0::192.168.1.102::inst0::INSTR',
                     '--duration', str(total_duration),
                     '--filename', str(experiment_path / filename)
-                ], check=True)
+                ])
             else:
-                # FBG采集
-                pass
+                data_process = subprocess.Popen([
+                    sys.executable, str(self.fbg_cli), 'start',
+                    '--ip', fbg_ip,
+                    '--duration', str(total_duration),
+                    '--filename', str(experiment_path / filename),
+                    '--channel', str(fbg_channel)
+                ])
+
+            time.sleep(1)
 
             # MFC流程
-            subprocess.run([
-                'python', str(self.mfc_cli), 'set',
-                '--channel', '1', '--flow', str(h2_flow)
-            ], check=True)
+            if self.mfc_controller:
+                self.mfc_controller.set_flow(self.mfc_controller.addresses[0], h2_flow)
+            else:
+                subprocess.run([
+                    sys.executable, str(self.mfc_cli), 'set',
+                    '--channel', '1', '--flow', str(h2_flow)
+                ], check=True)
 
             time.sleep(h2_time)
 
-            subprocess.run([
-                'python', str(self.mfc_cli), 'close',
-                '--channel', '1'
-            ], check=True)
+            if self.mfc_controller:
+                self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
+            else:
+                subprocess.run([
+                    sys.executable, str(self.mfc_cli), 'close',
+                    '--channel', '1'
+                ], check=True)
 
-            cycle_result['data_file'] = str(data_file)
+            remaining_time = total_duration - h2_time
+            if remaining_time > 0:
+                time.sleep(remaining_time)
+
+            if data_process:
+                data_process.wait(timeout=15)
+
+            actual_data_file = self._find_generated_csv(experiment_path, filename)
+            cycle_result['data_file'] = str(actual_data_file or data_file)
             cycle_result['success'] = True
 
         except Exception as e:
+            if self.mfc_controller:
+                self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
             cycle_result['success'] = False
             cycle_result['error'] = str(e)
+        finally:
+            if data_process and data_process.poll() is None:
+                try:
+                    data_process.terminate()
+                    data_process.wait(timeout=5)
+                except Exception:
+                    data_process.kill()
 
         cycle_result['end_time'] = datetime.now().isoformat()
         return cycle_result
 
+    def _find_generated_csv(self, experiment_path: Path, filename: str) -> Optional[Path]:
+        exact = experiment_path / f"{filename}.csv"
+        if exact.exists():
+            return exact
+
+        matches = sorted(
+            experiment_path.glob(f"{filename}_*.csv"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True
+        )
+        return matches[0] if matches else None
+
     def _cleanup(self):
         """清理资源"""
-        try:
-            subprocess.run(['python', str(self.mfc_cli), 'close', '--all'],
-                         capture_output=True, text=True)
-        except:
-            pass
+        if self.mfc_controller:
+            try:
+                self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
+                time.sleep(0.3)
+                self.mfc_controller.set_flow(self.mfc_controller.addresses[1], 0)
+                time.sleep(0.3)
+                self.mfc_controller.disconnect()
+            except Exception as e:
+                print(f"MFC清理异常: {e}")
+            finally:
+                self.mfc_controller = None
+        else:
+            try:
+                subprocess.run([sys.executable, str(self.mfc_cli), 'close', '--all'],
+                             capture_output=True, text=True)
+            except:
+                pass
 
     def get_experiment_status(self, experiment_id: str = None) -> Optional[Dict]:
         """
@@ -467,7 +787,10 @@ class HydrogenExperimentSkill:
 
 
 # Skill接口函数
-def run_hydrogen_experiment(request: str, output_folder: Optional[str] = None) -> Dict:
+def run_hydrogen_experiment(request: str,
+                            output_folder: Optional[str] = None,
+                            high_concentration_authorized: bool = False,
+                            save_artifacts: bool = False) -> Dict:
     """
     运行氢气实验（异步版本，立即返回）
 
@@ -493,13 +816,23 @@ def run_hydrogen_experiment(request: str, output_folder: Optional[str] = None) -
         print(f"  {k}: {v}")
 
     # 启动实验（异步，立即返回）
-    experiment_id = skill.start_experiment(
-        sensor_name=params['sensor_name'],
-        concentration=params['concentration'],
-        h2_time=params['h2_time'],
-        loop_count=params['loop_count'],
-        instrument=params['instrument']
-    )
+    try:
+        experiment_id = skill.start_experiment(
+            sensor_name=params['sensor_name'],
+            concentration=params['concentration'],
+            h2_time=params['h2_time'],
+            loop_count=params['loop_count'],
+            instrument=params['instrument'],
+            mfc2_flow=params['mfc2_flow'],
+            high_concentration_authorized=high_concentration_authorized,
+            save_artifacts=save_artifacts,
+        )
+    except PermissionError as e:
+        return {
+            'error': str(e),
+            'safety_blocked': True,
+            'params': params,
+        }
 
     return {
         'experiment_id': experiment_id,
@@ -522,6 +855,38 @@ def get_hydrogen_experiment_status(experiment_id: str, output_folder: Optional[s
     """
     skill = HydrogenExperimentSkill(output_folder=output_folder)
     return skill.get_experiment_status(experiment_id)
+
+
+def save_hydrogen_experiment_artifacts(experiment_id: str,
+                                       output_folder: Optional[str] = None) -> Dict:
+    """
+    保存已完成异步实验的合并响应曲线图和 JSON。
+    """
+    skill = HydrogenExperimentSkill(output_folder=output_folder)
+    state = skill.get_experiment_status(experiment_id)
+    if not state:
+        return {
+            'error': '找不到实验状态',
+            'experiment_id': experiment_id,
+        }
+
+    experiment_path = Path(state.get('experiment_path') or (skill.base_dir / experiment_id))
+    experiment_path.mkdir(parents=True, exist_ok=True)
+
+    cycle_files = []
+    for index, cycle in enumerate(state.get('cycles', []), start=1):
+        data_file = cycle.get('data_file')
+        if data_file:
+            cycle_files.append((cycle.get('cycle', index), data_file))
+
+    return skill._finalize_experiment_outputs(
+        results=state,
+        cycle_files=cycle_files,
+        experiment_path=experiment_path,
+        sensor_name=state.get('sensor_name', 'Unknown'),
+        concentration=state.get('concentration', 'unknown'),
+        save_artifacts=True,
+    )
 
 
 if __name__ == '__main__':

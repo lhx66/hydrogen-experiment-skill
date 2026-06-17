@@ -16,15 +16,15 @@
 # 列出可用串口
 dist\mfc_cli.exe connect --list
 
-# 连接设备（波特率9600）
+# 连接设备
 dist\mfc_cli.exe connect --port COM3
 
 # 设置流量
-dist\mfc_cli.exe set --channel 1 --flow 40    # MFC1: 40 sccm (氢气)
-dist\mfc_cli.exe set --channel 2 --flow 2     # MFC2: 2 slm (载气)
+dist\mfc_cli.exe set --channel 2 --flow 1.0   # MFC2: 1.0 slm (载气)
+dist\mfc_cli.exe set --channel 1 --flow 30    # MFC1: 30 sccm (3%氢气)
 
 # 执行实验流程
-dist\mfc_cli.exe run-sequence --mfc2-flow 2.0 --mfc1-flow 40 --mfc1-duration 40 --loop-count 10
+dist\mfc_cli.exe run-sequence --mfc2-flow 1.0 --mfc1-flow 30 --mfc1-duration 40 --loop-count 10
 
 # 关闭所有MFC
 dist\mfc_cli.exe close --all
@@ -40,18 +40,14 @@ dist\mfc_cli.exe disconnect
 dist\powermeter_cli.exe list
 
 # 启动采集
-dist\powermeter_cli.exe start --resource TCPIP0::192.168.1.102::inst0::INSTR --duration 600 --filename sensor1_test
+dist\powermeter_cli.exe start --resource TCPIP0::192.168.1.102::inst0::INSTR --duration 600 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-600s_power_cycle01
 ```
 
 ### FBG解调仪工具
 
 ```bash
-# 连接并启动采集
-dist\fbg_cli.exe connect --ip 192.168.1.1
-dist\fbg_cli.exe start --duration 600 --filename sensor1_test --channel 1
-
-# 断开连接
-dist\fbg_cli.exe disconnect
+# 连接并启动采集；connect只用于连通性检查，未指定通道时默认通道1
+dist\fbg_cli.exe start --ip 192.168.1.1 --duration 600 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-600s_FBG-ch1_cycle01
 ```
 
 ## 数据分析
@@ -61,7 +57,7 @@ dist\fbg_cli.exe disconnect
 python analysis\analyze_sensor_response.py data.csv
 
 # 分析多个文件并生成报告
-python analysis\analyze_sensor_response.py *.csv --output results.json
+python analysis\analyze_sensor_response.py *.csv --output sensor_A_H2-3percent_response_summary.json
 ```
 
 ## 自动化Skill使用
@@ -79,9 +75,11 @@ result = run_hydrogen_experiment(
 ```
 
 每次实验会输出：
-- 每次循环后的响应曲线图（在agent窗口显示）
-- 所有循环完成后保存合并图到本地
-- 实验结果JSON文件
+- 每次循环后的响应曲线图（只在agent窗口显示，不保存单轮图片）
+- 所有循环完成后的合并响应曲线图（默认只在agent窗口显示）
+- 实验结果JSON内容（默认只打印到agent窗口）
+- 用户明确要求保存分析结果时，可设置 `save_artifacts=True` 保存合并图和JSON
+- 自动生成的文件名不添加时间戳，而是包含传感器、浓度、MFC流量、记录时长、测量通道和循环编号等关键信息
 
 ## 项目结构
 
@@ -106,9 +104,12 @@ experiment-skill/
 
 ## 注意事项
 
-1. **MFC波特率**：固定为9600
-2. **安全机制**：MFC2流量 < 0.1 slm时自动关闭MFC1
-3. **数据保存**：实验结果保存在用户指定的文件夹中
-4. **图像输出**：
-   - 单次循环：base64编码显示在agent窗口
-   - 全部循环：PNG图片保存在实验目录
+1. **默认流量计算**：MFC2=1.0 slm时，3%氢气对应MFC1=30 sccm
+2. **MFC端口推荐**：`connect --list` 会根据串口名称输出推荐端口
+3. **FBG采集**：使用 `start --ip ...`，不要分开执行 connect 和 start；未指定通道时默认通道1
+4. **安全机制**：MFC2流量 < 0.1 slm时自动关闭MFC1
+5. **高浓度授权**：4%不拦截；超过4.0%氢气浓度必须获得用户明确授权，并设置 `high_concentration_authorized=True` 后才能启动
+6. **数据保存**：实验CSV保存在用户指定的文件夹中，文件名不带时间戳；最终合并图和JSON默认不落盘
+7. **图像输出**：
+   - 单次循环：base64编码显示在agent窗口，不写入结果JSON
+   - 全部循环：默认显示在agent窗口，用户要求保存分析结果时才写入实验目录

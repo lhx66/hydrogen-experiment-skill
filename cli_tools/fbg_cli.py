@@ -246,6 +246,12 @@ class DataLogger:
             pass
 
 
+def output_csv_filename(base):
+    """返回CSV文件名，不自动追加时间戳。"""
+    base = str(base)
+    return base if base.lower().endswith('.csv') else f"{base}.csv"
+
+
 class AcquisitionThread(threading.Thread):
     """数据采集线程"""
 
@@ -261,7 +267,10 @@ class AcquisitionThread(threading.Thread):
     def run(self):
         """采集循环"""
         start_time = time.time()
-        self.demodulator.send_start_command()
+        if not self.demodulator.send_start_command():
+            if self.status_callback:
+                self.status_callback("启动采集命令发送失败")
+            return
 
         while not self.stop_event.is_set():
             # 检查时长
@@ -304,18 +313,25 @@ def cmd_connect(args, controller):
 
 def cmd_start(args, controller):
     """启动采集命令"""
+    opened_here = False
     if not controller.connected:
-        print("错误：设备未连接，请先执行 connect 命令")
-        return
+        ip = getattr(args, "ip", None)
+        port = args.port or 5000
+        if not ip:
+            print("错误：请指定FBG解调仪IP (--ip 192.168.1.1)")
+            return
+        print(f"正在连接FBG解调仪: {ip}:{port}")
+        if not controller.connect(ip, port):
+            return
+        opened_here = True
 
     duration = args.duration or 0
     filename = args.filename or 'fbg_data'
     channel = args.channel or 1
     moving_avg = args.moving_average or 1
 
-    # 生成文件名
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_filename = f"{filename}_{timestamp}.csv"
+    # 生成文件名。实验文件夹通常已带日期，文件名保留实验条件信息即可。
+    csv_filename = output_csv_filename(filename)
 
     # 创建记录器
     logger = DataLogger(csv_filename, channel, moving_avg)
@@ -359,6 +375,8 @@ def cmd_start(args, controller):
         controller.send_stop_command()
         acquisition_thread.stop()
         logger.stop()
+        if opened_here:
+            controller.disconnect(send_stop=False)
 
 
 def cmd_disconnect(args, controller):
@@ -373,7 +391,7 @@ def main():
         epilog="""
 示例:
   %(prog)s connect --ip 192.168.1.1
-  %(prog)s start --duration 600 --filename sensor1_test --channel 1
+  %(prog)s start --ip 192.168.1.1 --duration 600 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-600s_FBG-ch1_cycle01 --channel 1
   %(prog)s disconnect
         """
     )
@@ -387,6 +405,8 @@ def main():
 
     # start命令
     start_parser = subparsers.add_parser('start', help='开始采集')
+    start_parser.add_argument('--ip', help='设备IP地址')
+    start_parser.add_argument('--port', type=int, help='端口号 (默认5000)')
     start_parser.add_argument('--duration', type=int, help='采集时长 (秒, 0表示无限)')
     start_parser.add_argument('--filename', help='保存文件名 (不含扩展名)')
     start_parser.add_argument('--channel', type=int, default=1, help='选择通道 (1-8, 默认1)')

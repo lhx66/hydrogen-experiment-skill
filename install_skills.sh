@@ -15,8 +15,9 @@ set -e
 # ---------------------------------------------------------------------------
 # 常量定义
 # ---------------------------------------------------------------------------
-REPO_URL="${HYDROGEN_EXPERIMENT_REPO_URL:-https://github.com/YOUR_USER/experiment-skill.git}"
+REPO_URL="${HYDROGEN_EXPERIMENT_REPO_URL:-https://github.com/lhx66/hydrogen-experiment-skill.git}"
 SKILL_NAME="hydrogen-experiment"
+SKILL_DIR_NAME="hydrogen_experiment"
 COMMAND_NAME="hydrogen-experiment"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=8
@@ -30,7 +31,7 @@ else
     LOCAL_INSTALL=false
 fi
 
-ACTIVE_SKILLS_DIR="$CANONICAL_DIR/skills/$SKILL_NAME"
+ACTIVE_SKILLS_DIR="$CANONICAL_DIR/skills/$SKILL_DIR_NAME"
 REQUIREMENTS_FILE="$CANONICAL_DIR/requirements.txt"
 
 # ---------------------------------------------------------------------------
@@ -201,8 +202,11 @@ setup_cli_tools() {
 # CLI 工具环境设置
 # Source 此文件以设置正确的 PYTHONPATH
 
-export PYTHONPATH="${PYTHONPATH}:$(cd "$(dirname "$0")/../.." && pwd)/cli_tools"
-export PATH="${PATH}:$(cd "$(dirname "$0")" && pwd)"
+CLI_TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$CLI_TOOLS_DIR/.." && pwd)"
+
+export PYTHONPATH="${PYTHONPATH}:$CLI_TOOLS_DIR:$PROJECT_DIR/analysis:$PROJECT_DIR/skills"
+export PATH="${PATH}:$CLI_TOOLS_DIR"
 EOF
 
     chmod +x "$CANONICAL_DIR/cli_tools/env_setup.sh"

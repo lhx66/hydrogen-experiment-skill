@@ -6,7 +6,7 @@
 
 - **Python 3.8+** (安装脚本会自动检测并提示安装)
 - **操作系统**: Windows / macOS / Linux
-- **Claude Code** (可选，用于使用斜杠命令)
+- **Claude Code / Codex / Cursor** (可选，用于 Skill 分发或斜杠命令)
 
 ## 快速安装
 
@@ -14,18 +14,18 @@
 
 **macOS / Linux:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USER/experiment-skill/main/install_skills.sh | sh
+curl -fsSL https://raw.githubusercontent.com/lhx66/hydrogen-experiment-skill/main/install_skills.sh | sh
 ```
 
 或使用 wget:
 ```bash
-wget -qO- https://raw.githubusercontent.com/YOUR_USER/experiment-skill/main/install_skills.sh | sh
+wget -qO- https://raw.githubusercontent.com/lhx66/hydrogen-experiment-skill/main/install_skills.sh | sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
 # 先下载安装脚本
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/YOUR_USER/experiment-skill/main/install_skills.bat" -OutFile "install_skills.bat"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/lhx66/hydrogen-experiment-skill/main/install_skills.bat" -OutFile "install_skills.bat"
 # 再运行
 .\install_skills.bat
 ```
@@ -47,8 +47,8 @@ bash install_skills.sh
 安装脚本会自动：
 1. 检测并安装 Python 3.8+ (如未安装)
 2. 安装所需的 Python 依赖包
-3. 将 Skill 安装到 Claude Code (如已安装)
-4. 注册 `/hydrogen-experiment` 斜杠命令
+3. 将 Skill 分发到已安装的 Claude Code、Codex 或 Cursor
+4. 注册 `/hydrogen-experiment` 斜杠命令 (如已安装 Claude Code)
 
 ## 系统架构
 
@@ -110,14 +110,16 @@ source cli_tools/env_setup.sh
 
 ```bash
 # MFC 控制
+python cli_tools/mfc_cli.py connect --list
 python cli_tools/mfc_cli.py connect --port COM3
-python cli_tools/mfc_cli.py set --channel 1 --flow 40
+python cli_tools/mfc_cli.py set --channel 2 --flow 1.0
+python cli_tools/mfc_cli.py set --channel 1 --flow 30
 
 # 功率计采集
-python cli_tools/powermeter_cli.py start --duration 600
+python cli_tools/powermeter_cli.py start --resource TCPIP0::192.168.1.102::inst0::INSTR --duration 70 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_power_cycle01
 
 # FBG 解调仪
-python cli_tools/fbg_cli.py connect --ip 192.168.1.1
+python cli_tools/fbg_cli.py start --ip 192.168.1.1 --duration 70 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_FBG-ch1_cycle01
 
 # 数据分析
 python analysis/analyze_sensor_response.py data.csv
@@ -129,16 +131,25 @@ python analysis/analyze_sensor_response.py data.csv
 
 MFC 质量流量控制器，支持双通道控制（MFC1: 氢气 sccm, MFC2: 载气 slm）
 
+默认实验以 MFC2=1.0 slm 为载气基准：
+
+```text
+MFC1氢气流量(sccm) = 氢气浓度(%) * MFC2载气流量(slm) * 10
+```
+
+例如 3% 氢气、MFC2=1.0 slm 时，MFC1=30 sccm。
+
 ```bash
-# 连接设备
+# 连接设备；列表会根据串口名称输出推荐端口
+python cli_tools/mfc_cli.py connect --list
 python cli_tools/mfc_cli.py connect --port COM3
 
 # 设置流量
-python cli_tools/mfc_cli.py set --channel 1 --flow 40    # MFC1: 40 sccm
-python cli_tools/mfc_cli.py set --channel 2 --flow 2     # MFC2: 2 slm
+python cli_tools/mfc_cli.py set --channel 2 --flow 1.0   # MFC2: 1.0 slm 载气
+python cli_tools/mfc_cli.py set --channel 1 --flow 30    # MFC1: 30 sccm, 对应3% H2
 
 # 执行实验流程
-python cli_tools/mfc_cli.py run-sequence --mfc2-flow 2.0 --mfc1-flow 40 --mfc1-duration 40 --loop-count 10
+python cli_tools/mfc_cli.py run-sequence --mfc2-flow 1.0 --mfc1-flow 30 --mfc1-duration 40 --loop-count 10
 ```
 
 ### 功率计工具 (powermeter_cli.py)
@@ -157,10 +168,11 @@ python cli_tools/powermeter_cli.py start --resource TCPIP0::192.168.1.102::inst0
 
 8 通道波长数据采集工具（100Hz）
 
+注意：`connect` 命令只用于连通性检查。正式采集必须使用 `start --ip ...`，因为命令行进程结束后 TCP 连接不会保留。
+
 ```bash
-# 启动采集
-python cli_tools/fbg_cli.py connect --ip 192.168.1.1
-python cli_tools/fbg_cli.py start --duration 600 --channel 1
+# 连接并启动采集；connect只用于连通性检查，采集必须由start自连，未指定通道时默认通道1
+python cli_tools/fbg_cli.py start --ip 192.168.1.1 --duration 600 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-600s_FBG-ch1_cycle01
 ```
 
 ### 数据分析工具 (analyze_sensor_response.py)
@@ -172,7 +184,7 @@ python cli_tools/fbg_cli.py start --duration 600 --channel 1
 python analysis/analyze_sensor_response.py data.csv
 
 # 分析多个文件并生成报告
-python analysis/analyze_sensor_response.py *.csv --output results.json
+python analysis/analyze_sensor_response.py *.csv --output sensor_A_H2-3percent_response_summary.json
 ```
 
 ## 支持的自然语言请求
@@ -181,22 +193,29 @@ python analysis/analyze_sensor_response.py *.csv --output results.json
 |---------|------|
 | "进行十次4%氢气测试，每次40秒，使用功率计测量" | 10次循环，4%浓度，40秒通氢，功率计 |
 | "进行5次2%氢气测试，每次30秒，使用FBG测量" | 5次循环，2%浓度，30秒通氢，FBG |
-| "做三次1%氢气测试，每次20秒" | 3次循环，1%浓度，20秒通氢 |
+| "做三次3%氢气测试，每次20秒，MFC2载气1 slm" | 3次循环，MFC2=1.0 slm，MFC1=30 sccm |
 
 ## 实验流程
 
 1. Agent 解析用户的自然语言请求
-2. 询问实验结果保存文件夹
-3. 连接 MFC 和测量仪器
-4. 执行实验循环：
+2. 询问实验结果保存文件夹；文件夹名称通常由用户指定并可包含日期
+3. 让用户确认 MFC COM 口；不确定时先列出串口
+4. 连接 MFC，设置数字控制模式，先打开 MFC2 载气并等待稳定
+5. 连接或检查测量仪器：功率计检查 VISA 资源，FBG 检查 IP
+6. 执行每个循环：
+   - 先启动功率计或 FBG 数据采集
+   - 等待约 1 秒
    - 打开 MFC1（通氢气）
-   - 等待指定时间
+   - 保持指定通氢时间
    - 关闭 MFC1
-   - 等待数据采集完成
-   - **分析数据并生成响应曲线图**
-5. 关闭所有设备
-6. **绘制所有循环的合并图并保存**
-7. 生成实验报告
+   - 继续采集恢复段直到本轮总记录时长结束
+   - 分析 CSV，并把本轮响应曲线直接输出到 agent 窗口
+7. 非最后一轮时等待循环间隔，默认 60 秒
+8. 关闭所有设备：先关 MFC1，再关 MFC2
+9. 绘制所有循环的合并图，默认直接输出到 agent 窗口显示，不保存为图片文件
+10. 打印实验 JSON 到 agent 窗口；用户明确要求保存分析结果时，使用 `save_artifacts=True` 保存合并图和 JSON
+
+自动流程生成的文件名不添加时间戳，改为包含关键实验信息，例如 `sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_FBG-ch1_cycle01.csv`。用户要求保存分析结果时，合并响应曲线图和 JSON 也使用同一组关键信息，并分别追加 `allcycles` 与 `results` 标识。
 
 ## 数据分析指标
 
@@ -213,6 +232,7 @@ python analysis/analyze_sensor_response.py *.csv --output results.json
 ## 安全机制
 
 - **MFC2 流量监测**：当 MFC2 流量 < 0.1 slm 时自动关闭 MFC1
+- **高浓度授权**：4% 不拦截；超过 4.0% 氢气浓度必须获得用户明确授权，并设置 `high_concentration_authorized=True` 后才能启动
 - **异常中断保护**：Ctrl+C 时优雅关闭所有设备
 - **数据定期保存**：每 10 个数据点 flush 到磁盘
 
