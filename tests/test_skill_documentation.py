@@ -26,6 +26,7 @@ class SkillDocumentationTests(unittest.TestCase):
             "## 启动前确认",
             "AI必须先引导用户补齐并确认实验信息",
             "实验结果保存文件夹",
+            "默认沿用上次实验数据文件夹",
             "传感器名称",
             "循环次数",
             "氢气浓度",
@@ -67,10 +68,14 @@ class SkillDocumentationTests(unittest.TestCase):
             "文件名不添加时间戳",
             "文件夹名称通常由用户指定并可包含日期",
             "sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-70s_FBG-ch1_cycle01.csv",
-            "单轮图默认只打印到 agent 窗口中显示，不保存 PNG",
-            "所有循环结束后的合并响应曲线图默认保存在实验文件夹中",
+            "总程序只负责实验硬件编排和 CSV 产出，不内嵌分析或绘图",
+            "每组实验完成后，agent 默认调用分析脚本读取对应 CSV",
+            "单轮默认不绘图",
+            "所有循环结束后，agent 默认调用绘图脚本保存一张汇总响应曲线图",
+            "图片不推送到 agent 窗口进行显示",
+            "不打印 base64/data URL",
             "实验 JSON 默认只打印到 agent 窗口中显示",
-            "用户明确要求保存分析结果",
+            "用户明确要求保存分析 JSON",
             "save_artifacts=True",
         ]
 
@@ -92,6 +97,7 @@ class SkillDocumentationTests(unittest.TestCase):
             "功率计固定为 TCPIP0::192.169.1.102::inst0::INSTR",
             "不要向用户询问 FBG 解调仪地址、FBG 端口或功率计地址",
             "总程序会负责解析自然语言、连接 MFC、连接采集设备、设置 MFC 流量、等待稳定、启动数据记录、通氢、恢复和清理",
+            "它会在实验 JSON 中列出每轮 CSV 文件路径",
         ]
 
         for phrase in required_phrases:
@@ -107,7 +113,9 @@ class SkillDocumentationTests(unittest.TestCase):
             "**FBG 解调仪固定为 192.168.1.1:1000**",
             "**功率计固定为 TCPIP0::192.169.1.102::inst0::INSTR**",
             "**超过4.0% 的氢气浓度必须先获得明确授权**",
-            "**所有循环结束后的合并响应曲线图默认保存在实验文件夹中**",
+            "**总程序只负责实验硬件编排和 CSV 产出，不内嵌分析或绘图**",
+            "**每组实验完成后，agent 默认调用分析脚本读取对应 CSV，并按固定格式输出分析信息**",
+            "**所有循环结束后，agent 默认调用绘图脚本保存一张汇总响应曲线图到实验文件夹中，并只把文件路径发送到 agent 窗口**",
         ]
 
         for phrase in required_bold_phrases:
@@ -120,11 +128,38 @@ class SkillDocumentationTests(unittest.TestCase):
         required_phrases = [
             "python analysis/plot_sensor_response.py",
             "python analysis/analyze_sensor_response.py analyze",
+            "--json",
             "单组数据绘图",
             "多组数据共同绘图",
             "单组数据分析",
             "多组数据分析",
             "--output",
+            "固定分析输出格式",
+            "[单轮数据分析]",
+            "[实验汇总]",
+        ]
+
+        for phrase in required_phrases:
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_skill_documents_all_agent_callable_scripts(self):
+        text = SKILL_MD.read_text(encoding="utf-8")
+
+        required_phrases = [
+            "cli_tools/experiment_cli.py",
+            "python cli_tools/experiment_cli.py run",
+            "analysis/analyze_sensor_response.py",
+            "python analysis/analyze_sensor_response.py analyze",
+            "analysis/plot_sensor_response.py",
+            "python analysis/plot_sensor_response.py",
+            "cli_tools/mfc_cli.py",
+            "python cli_tools/mfc_cli.py connect --list",
+            "cli_tools/fbg_cli.py",
+            "python cli_tools/fbg_cli.py start",
+            "cli_tools/powermeter_cli.py",
+            "python cli_tools/powermeter_cli.py list",
+            "python cli_tools/powermeter_cli.py start",
         ]
 
         for phrase in required_phrases:

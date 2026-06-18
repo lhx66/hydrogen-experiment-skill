@@ -2,7 +2,8 @@
 """
 命令行响应曲线绘图工具。
 
-默认把 PNG 以 Markdown data URL 打印到 agent 窗口；传入 --output 时保存 PNG。
+不指定 --output 时会把 PNG 以 Markdown data URL 打印到标准输出；
+实验 skill 场景优先传入 --output 保存 PNG 并报告文件路径。
 支持单个 CSV 绘图，也支持多组 CSV 共同绘图。
 """
 
@@ -15,6 +16,14 @@ from pathlib import Path
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
+
+_ANALYSIS_MODULE = "analyze_sensor_response"
+_EXPECTED_ANALYSIS_PATH = CURRENT_DIR / "analyze_sensor_response.py"
+_existing_analysis_module = sys.modules.get(_ANALYSIS_MODULE)
+if _existing_analysis_module is not None:
+    existing_path = getattr(_existing_analysis_module, "__file__", None)
+    if existing_path is None or Path(existing_path).resolve() != _EXPECTED_ANALYSIS_PATH.resolve():
+        del sys.modules[_ANALYSIS_MODULE]
 
 from analyze_sensor_response import (  # noqa: E402
     analyze_sensor_data,
@@ -45,7 +54,7 @@ def _build_parser():
         """,
     )
     parser.add_argument("files", nargs="+", help="一个或多个 CSV 数据文件")
-    parser.add_argument("--output", help="PNG 输出路径；不指定时只打印到 agent 窗口")
+    parser.add_argument("--output", help="PNG 输出路径；实验skill场景建议始终指定")
     parser.add_argument("--title", default=None, help="图标题")
     parser.add_argument("--sensor-name", default="", help="传感器名称，用于多组图标题")
     parser.add_argument("--concentration", default="", help="氢气浓度，用于多组图标题")

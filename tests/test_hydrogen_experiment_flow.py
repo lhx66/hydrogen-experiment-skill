@@ -159,25 +159,80 @@ class HydrogenExperimentFlowTests(unittest.TestCase):
         self.assertIn("--resource", command)
         self.assertIn("TCPIP0::192.169.1.102::inst0::INSTR", command)
 
-    def test_cycle_plot_is_displayed_to_agent_without_saving_base64_in_result(self):
-        skill = self.module.HydrogenExperimentSkill(output_folder=str(ROOT / "tmp_test_output"))
-        cycle_result = {}
+    def test_cycle_outputs_csv_without_embedded_analysis_or_plotting(self):
+        output_dir = ROOT / "tmp_test_output" / "sync_no_cycle_analysis"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
+        data_file = output_dir / "cycle1.csv"
+        skill = self.module.HydrogenExperimentSkill(output_folder=str(output_dir))
 
-        with redirect_stdout(io.StringIO()) as stdout:
-            displayed = skill._display_cycle_plot(
-                cycle_result=cycle_result,
-                cycle=1,
-                plot_data="abc123",
-                plot_title="Cycle 1 - sensor_A (3%)",
+        with patch.object(skill, "_connect_mfc_direct", return_value=True), \
+             patch.object(skill, "_connect_fbg", return_value=True), \
+             patch.object(skill, "_run_single_cycle", return_value={
+                 "cycle": 1,
+                 "data_file": str(data_file),
+                 "success": True,
+             }), \
+             patch.object(skill, "_cleanup"), \
+             patch.object(self.module, "analyze_sensor_data") as analyze_data, \
+             patch.object(self.module, "plot_response_curve") as plot_curve, \
+             redirect_stdout(io.StringIO()):
+            result = skill.run_experiment(
+                sensor_name="sensor_A",
+                concentration="3%",
+                h2_time=1,
+                loop_count=1,
+                instrument="fbg",
+                total_duration=2,
             )
 
-        self.assertTrue(displayed)
-        self.assertTrue(cycle_result["plot_displayed"])
-        self.assertNotIn("plot", cycle_result)
-        output = stdout.getvalue()
-        self.assertIn("![Cycle 1 - sensor_A (3%)](data:image/png;base64,abc123)", output)
+        analyze_data.assert_not_called()
+        plot_curve.assert_not_called()
+        self.assertFalse(result["combined_plot_saved"])
+        self.assertNotIn("analysis", result["cycles"][0])
+        self.assertNotIn("plot_file", result["cycles"][0])
+        self.assertEqual(
+            result["cycle_data_files"],
+            [{"cycle": 1, "data_file": str(data_file)}],
+        )
 
-    def test_final_combined_plot_is_saved_and_json_displayed_by_default(self):
+    def test_experiment_output_does_not_push_images_to_agent_window(self):
+        output_dir = ROOT / "tmp_test_output" / "sync_no_image_push"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
+        data_file = output_dir / "cycle1.csv"
+        skill = self.module.HydrogenExperimentSkill(output_folder=str(output_dir))
+
+        with patch.object(skill, "_connect_mfc_direct", return_value=True), \
+             patch.object(skill, "_connect_fbg", return_value=True), \
+             patch.object(skill, "_run_single_cycle", return_value={
+                 "cycle": 1,
+                 "data_file": str(data_file),
+                 "success": True,
+             }), \
+             patch.object(skill, "_cleanup"), \
+             patch.object(self.module, "analyze_sensor_data") as analyze_data, \
+             patch.object(self.module, "plot_response_curve", return_value="cGxvdA==") as plot_curve, \
+             redirect_stdout(io.StringIO()) as stdout:
+            result = skill.run_experiment(
+                sensor_name="sensor_A",
+                concentration="3%",
+                h2_time=1,
+                loop_count=1,
+                instrument="fbg",
+                total_duration=2,
+            )
+
+        analyze_data.assert_not_called()
+        plot_curve.assert_not_called()
+        cycle = result["cycles"][0]
+        self.assertNotIn("analysis", cycle)
+        self.assertNotIn("plot_file", cycle)
+        self.assertNotIn("data:image", stdout.getvalue())
+
+    def test_final_json_is_displayed_by_default_for_agent_postprocessing(self):
         output_dir = ROOT / "tmp_test_output" / "sync_default_final"
         if output_dir.exists():
             shutil.rmtree(output_dir)
@@ -199,16 +254,22 @@ class HydrogenExperimentFlowTests(unittest.TestCase):
                 save_artifacts=False,
             )
 
-        self.assertTrue(results["combined_plot_saved"])
+        self.assertFalse(results["combined_plot_saved"])
         self.assertTrue(results["json_displayed"])
-        self.assertIn("combined_plot", results)
+        self.assertNotIn("combined_plot", results)
         self.assertNotIn("result_file", results)
         self.assertFalse((output_dir / "experiment_results.json").exists())
-        self.assertEqual(len(list(output_dir.glob("*allcycles*.png"))), 1)
+        self.assertEqual(len(list(output_dir.glob("*.png"))), 0)
+        self.assertEqual(
+            results["cycle_data_files"],
+            [{"cycle": 1, "data_file": str(output_dir / "cycle1.csv")}],
+        )
         output = stdout.getvalue()
         self.assertIn('"sensor_name": "sensor_A"', output)
+        self.assertIn("cycle1.csv", output)
+        self.assertNotIn("data:image", output)
 
-    def test_final_artifacts_can_be_saved_when_user_requests_analysis_output(self):
+    def test_final_json_can_be_saved_when_user_requests_analysis_output(self):
         output_dir = ROOT / "tmp_test_output" / "sync_save_final"
         if output_dir.exists():
             shutil.rmtree(output_dir)
@@ -231,18 +292,14 @@ class HydrogenExperimentFlowTests(unittest.TestCase):
             )
 
         self.assertTrue(saved["artifacts_saved"])
-        self.assertIn("combined_plot", results)
+        self.assertNotIn("combined_plot", results)
         self.assertIn("result_file", results)
         result_file = Path(results["result_file"])
-        combined_plot = Path(results["combined_plot"])
         self.assertTrue(result_file.exists())
-        self.assertTrue(combined_plot.exists())
         self.assertNotEqual(result_file.name, "experiment_results.json")
         self.assertIn("sensor_A", result_file.name)
         self.assertIn("H2-3percent", result_file.name)
-        self.assertIn("allcycles", combined_plot.name)
         self.assertNotRegex(result_file.name, r"\d{8}_\d{6}")
-        self.assertNotRegex(combined_plot.name, r"\d{8}_\d{6}")
 
 
 if __name__ == "__main__":

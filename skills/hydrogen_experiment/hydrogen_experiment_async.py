@@ -5,7 +5,6 @@
 实验状态保存在文件中，agent可以随时查询进度。
 """
 
-import os
 import sys
 import time
 import json
@@ -428,15 +427,7 @@ class HydrogenExperimentSkill:
 
                 if cycle_result.get('data_file'):
                     cycle_files.append((cycle, cycle_result['data_file']))
-
-                    # 分析数据
-                    analysis = analyze_sensor_data(cycle_result['data_file'])
-                    cycle_result['analysis'] = analysis
-
-                    # 绘制响应曲线（保存到状态中）
-                    plot_title = f"Cycle {cycle} - {sensor_name} ({concentration})"
-                    plot_data = plot_response_curve(cycle_result['data_file'], analysis, plot_title)
-                    self._display_cycle_plot(cycle_result, cycle, plot_data, plot_title)
+                    print(f"  OK 本轮CSV已生成: {cycle_result['data_file']}")
 
                 # 更新循环结果
                 state = self.state_manager.load()
@@ -470,23 +461,6 @@ class HydrogenExperimentSkill:
                 'error': str(e)
             })
 
-    def _display_cycle_plot(self,
-                            cycle_result: Dict,
-                            cycle: int,
-                            plot_data: Optional[str],
-                            plot_title: str) -> bool:
-        """把单轮图输出到agent窗口，不把base64图像保存进状态文件。"""
-        if not plot_data:
-            cycle_result['plot_displayed'] = False
-            print(f"  WARN 循环 {cycle} 响应图生成失败")
-            return False
-
-        cycle_result['plot_displayed'] = True
-        print(f"\n[Cycle {cycle} response plot]")
-        print(f"![{plot_title}](data:image/png;base64,{plot_data})")
-        print(f"[/Cycle {cycle} response plot]")
-        return True
-
     def _finalize_experiment_outputs(self,
                                      results: Dict,
                                      cycle_files: List[Tuple[int, str]],
@@ -494,42 +468,14 @@ class HydrogenExperimentSkill:
                                      sensor_name: str,
                                      concentration: str,
                                      save_artifacts: bool = False) -> Dict:
-        """Save the final combined plot by default; save JSON only on request."""
+        """Print experiment JSON by default; save JSON only on request."""
         saved = {'artifacts_saved': bool(save_artifacts)}
         results['artifacts_saved'] = bool(save_artifacts)
-
-        if cycle_files:
-            print("正在生成所有响应曲线...")
-            artifact_stem = build_experiment_file_stem(
-                sensor_name=sensor_name,
-                concentration=concentration,
-                h2_flow=results.get('h2_flow'),
-                mfc2_flow=results.get('mfc2_flow'),
-                h2_time=results.get('h2_time'),
-                total_duration=results.get('total_duration'),
-                instrument=results.get('instrument'),
-                fbg_channel=results.get('fbg_channel'),
-                suffix='allcycles',
-            )
-            combined_plot_path = experiment_path / f"{artifact_stem}.png"
-
-            success = plot_multiple_cycles(
-                cycle_files,
-                str(combined_plot_path),
-                title="All Response Cycles",
-                sensor_name=sensor_name,
-                concentration=concentration,
-            )
-
-            results['combined_plot_saved'] = bool(success)
-            if success:
-                print(f"OK 合并图已保存: {combined_plot_path}")
-                results['combined_plot'] = str(combined_plot_path)
-                saved['combined_plot'] = str(combined_plot_path)
-            else:
-                print("WARN 合并响应曲线生成失败")
-        else:
-            results['combined_plot_saved'] = False
+        results['combined_plot_saved'] = False
+        results['cycle_data_files'] = [
+            {'cycle': cycle, 'data_file': data_file}
+            for cycle, data_file in cycle_files
+        ]
 
         if save_artifacts:
             result_stem = build_experiment_file_stem(
@@ -854,7 +800,7 @@ def get_hydrogen_experiment_status(experiment_id: str, output_folder: Optional[s
 def save_hydrogen_experiment_artifacts(experiment_id: str,
                                        output_folder: Optional[str] = None) -> Dict:
     """
-    保存已完成异步实验的合并响应曲线图和 JSON。
+    保存已完成异步实验的最终实验 JSON。
     """
     skill = HydrogenExperimentSkill(output_folder=output_folder)
     state = skill.get_experiment_status(experiment_id)

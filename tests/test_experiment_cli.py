@@ -37,6 +37,15 @@ def load_experiment_cli():
 class ExperimentCliTests(unittest.TestCase):
     def setUp(self):
         self.experiment_cli = load_experiment_cli()
+        self.state_file = ROOT / "tmp_test_output" / "experiment_cli_state.json"
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        if self.state_file.exists():
+            self.state_file.unlink()
+        self.experiment_cli.STATE_FILE = self.state_file
+
+    def tearDown(self):
+        if self.state_file.exists():
+            self.state_file.unlink()
 
     def test_build_plan_from_natural_language_uses_fixed_device_addresses(self):
         plan = self.experiment_cli.build_run_plan(
@@ -105,6 +114,29 @@ class ExperimentCliTests(unittest.TestCase):
         plan = json.loads(stdout.getvalue())
         self.assertEqual(plan["instrument"], "powermeter")
         self.assertEqual(plan["powermeter_resource"], "TCPIP0::192.169.1.102::inst0::INSTR")
+        self.assertEqual(
+            self.experiment_cli.load_last_output_folder(),
+            str(ROOT / "tmp_test_output"),
+        )
+
+    def test_dry_run_reuses_last_output_folder_when_not_provided(self):
+        self.experiment_cli.save_last_output_folder(str(ROOT / "tmp_test_output" / "reused_folder"))
+        stdout = io.StringIO()
+
+        with patch.object(self.experiment_cli, "run_hydrogen_experiment") as run_experiment:
+            with redirect_stdout(stdout):
+                exit_code = self.experiment_cli.main([
+                    "run",
+                    "进行1次3%氢气测试，每次20秒，使用功率计测量",
+                    "--mfc-port",
+                    "COM7",
+                    "--dry-run",
+                ])
+
+        self.assertEqual(exit_code, 0)
+        run_experiment.assert_not_called()
+        plan = json.loads(stdout.getvalue())
+        self.assertEqual(plan["output_folder"], str(ROOT / "tmp_test_output" / "reused_folder"))
 
     def test_run_calls_existing_runner_with_minimal_arguments(self):
         with patch.object(

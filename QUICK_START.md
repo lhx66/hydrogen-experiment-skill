@@ -16,7 +16,9 @@
 python cli_tools\experiment_cli.py run "进行十次4%氢气测试，每次40秒，使用功率计测量" --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --dry-run
 ```
 
-确认后去掉 `--dry-run` 正式运行。总程序会负责连接设备、打开 MFC2 载气、等待稳定、启动数据记录、执行用户要求的通氢流程、恢复和清理。
+确认后去掉 `--dry-run` 正式运行。总程序会负责连接设备、打开 MFC2 载气、等待稳定、启动数据记录、执行用户要求的通氢流程、恢复和清理，并输出每轮 CSV 路径。分析和绘图由 agent 单独调用 `analysis/` 下的脚本。
+
+如果用户未要求更换数据文件夹，后续命令可以省略 `--output-folder`，总程序会沿用上次实验数据文件夹。
 
 固定设备地址：
 - FBG 解调仪：`192.168.1.1:1000`
@@ -68,13 +70,16 @@ dist\fbg_cli.exe start --duration 600 --filename sensor_A_H2-3percent_MFC1-30scc
 
 ```bash
 # 单组数据分析
-python analysis\analyze_sensor_response.py analyze cycle01.csv --output sensor_A_H2-3percent_cycle01_response.json
+python analysis\analyze_sensor_response.py analyze cycle01.csv --json
 
 # 多组数据分析
-python analysis\analyze_sensor_response.py analyze cycle01.csv cycle02.csv cycle03.csv --output sensor_A_H2-3percent_response_summary.json
+python analysis\analyze_sensor_response.py analyze cycle01.csv cycle02.csv cycle03.csv --json
 
-# 单组数据绘图，默认只打印到 agent 窗口
-python analysis\plot_sensor_response.py cycle01.csv --title "Cycle 1"
+# 用户要求保存分析JSON时
+python analysis\analyze_sensor_response.py analyze cycle01.csv --output sensor_A_H2-3percent_cycle01_response.json
+
+# 单组数据绘图，保存PNG并报告路径
+python analysis\plot_sensor_response.py cycle01.csv --output sensor_A_H2-3percent_cycle01_response.png --title "Cycle 1"
 
 # 多组数据共同绘图并保存
 python analysis\plot_sensor_response.py cycle01.csv cycle02.csv cycle03.csv --output sensor_A_H2-3percent_allcycles.png --title "All cycles"
@@ -103,10 +108,11 @@ result = run_hydrogen_experiment(
 ```
 
 每次实验会输出：
-- 每次循环后的响应曲线图（只在agent窗口显示，不保存单轮图片）
-- 所有循环完成后的合并响应曲线图（默认保存在实验文件夹中）
+- 每次循环的 CSV 路径
+- agent 调用分析脚本后的固定格式响应指标
+- 所有循环完成后，agent 调用绘图脚本保存的汇总响应曲线图路径
 - 实验结果JSON内容（默认只打印到agent窗口）
-- 用户明确要求保存分析结果时，可设置 `save_artifacts=True` 保存最终JSON
+- 用户明确要求保存实验结果时，可设置 `save_artifacts=True` 保存最终JSON
 - 自动生成的文件名不添加时间戳，而是包含传感器、浓度、MFC流量、记录时长、测量通道和循环编号等关键信息
 
 ## 项目结构
@@ -139,7 +145,7 @@ experiment-skill/
 3. **固定设备地址**：FBG解调仪为 `192.168.1.1:1000`，功率计为 `TCPIP0::192.169.1.102::inst0::INSTR`
 4. **安全机制**：MFC2流量 < 0.1 slm时自动关闭MFC1
 5. **高浓度授权**：4%不拦截；超过4.0%氢气浓度必须获得用户明确授权，并设置 `high_concentration_authorized=True` 后才能启动
-6. **数据保存**：实验CSV保存在用户指定的文件夹中，文件名不带时间戳；最终合并图默认保存在实验文件夹中，JSON默认只打印到agent窗口
+6. **数据保存**：实验CSV保存在用户指定或上次沿用的文件夹中，文件名不带时间戳；JSON默认只打印到agent窗口
 7. **图像输出**：
-   - 单次循环：base64编码显示在agent窗口，不写入结果JSON
-   - 全部循环：合并响应曲线图默认写入实验目录
+   - 单次循环：默认不绘图，用户要求时由 agent 调用绘图脚本保存PNG
+   - 全部循环：由 agent 调用绘图脚本保存汇总响应曲线图并报告路径

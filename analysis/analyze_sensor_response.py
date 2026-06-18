@@ -266,7 +266,7 @@ def analyze_sensor_data(csv_file, time_column='Relative_Time(s)',
 
 
 def batch_analyze(csv_files, output_json=None, window_size=30, n_sigma=3,
-                  consecutive_n=5, value_column='Wavelength(nm)'):
+                  consecutive_n=5, value_column='Wavelength(nm)', quiet=False):
     """
     批量分析多个CSV文件
 
@@ -296,7 +296,8 @@ def batch_analyze(csv_files, output_json=None, window_size=30, n_sigma=3,
     if output_json:
         with open(output_json, 'w', encoding='utf-8') as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
-        print(f"结果已保存到: {output_json}")
+        if not quiet:
+            print(f"结果已保存到: {output_json}")
 
     return results
 
@@ -308,6 +309,7 @@ def _build_arg_parser():
         epilog="""
 示例:
   %(prog)s analyze data.csv
+  %(prog)s analyze data.csv --json
   %(prog)s analyze data.csv --window-size 50 --n-sigma 4
   %(prog)s analyze *.csv --output sensor_A_H2-3percent_response_summary.json
   %(prog)s data.csv --output legacy_single_file.json
@@ -319,6 +321,7 @@ def _build_arg_parser():
     parser.add_argument('--consecutive-n', type=int, default=5, help='连续超出点数 (默认5)')
     parser.add_argument('--value-column', default='Wavelength(nm)', help='数值列名')
     parser.add_argument('--output', help='输出JSON文件路径')
+    parser.add_argument('--json', action='store_true', help='只把分析结果JSON打印到标准输出')
     parser.add_argument('--verbose', action='store_true', help='详细输出')
     return parser
 
@@ -371,8 +374,12 @@ def main(argv=None):
         n_sigma=args.n_sigma,
         consecutive_n=args.consecutive_n,
         value_column=args.value_column,
+        quiet=args.json,
     )
-    _print_analysis_results(results)
+    if args.json:
+        print(json.dumps(results, ensure_ascii=False, indent=2))
+    else:
+        _print_analysis_results(results)
     return 0
 
 

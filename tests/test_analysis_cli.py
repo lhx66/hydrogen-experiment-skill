@@ -72,6 +72,17 @@ class AnalysisCliTests(unittest.TestCase):
         results = json.loads(output_json.read_text(encoding="utf-8"))
         self.assertEqual(len(results), 1)
 
+    def test_analyze_cli_json_mode_prints_parseable_results(self):
+        module = load_module("analysis/analyze_sensor_response.py", "analysis_cli_json_under_test")
+
+        with redirect_stdout(io.StringIO()) as stdout:
+            exit_code = module.main(["analyze", str(self.csv1), "--json"])
+
+        self.assertEqual(exit_code, 0)
+        results = json.loads(stdout.getvalue())
+        self.assertEqual(len(results), 1)
+        self.assertEqual(Path(results[0]["file"]).name, "cycle1.csv")
+
     def test_plot_cli_displays_single_file_without_saving_by_default(self):
         module = load_module("analysis/plot_sensor_response.py", "plot_cli_single_under_test")
 

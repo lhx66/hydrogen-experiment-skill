@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_DIR = ROOT / "skills" / "hydrogen_experiment"
+STATE_FILE = Path.home() / ".hydrogen_experiment_skill_state.json"
 DEFAULT_MFC2_STABILIZE_TIME = 5
 if str(SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(SKILL_DIR))
@@ -30,6 +31,46 @@ from hydrogen_experiment import (  # noqa: E402
 
 def _json_print(payload: Dict) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def load_cli_state() -> Dict:
+    try:
+        if STATE_FILE.exists():
+            return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return {}
+
+
+def save_cli_state(state: Dict) -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_last_output_folder() -> Optional[str]:
+    state = load_cli_state()
+    output_folder = state.get("last_output_folder")
+    return str(output_folder) if output_folder else None
+
+
+def save_last_output_folder(output_folder: str) -> None:
+    if not output_folder:
+        return
+    state = load_cli_state()
+    state["last_output_folder"] = str(output_folder)
+    save_cli_state(state)
+
+
+def resolve_output_folder(output_folder: Optional[str]) -> str:
+    if output_folder:
+        save_last_output_folder(output_folder)
+        return output_folder
+
+    last_output_folder = load_last_output_folder()
+    if last_output_folder:
+        return last_output_folder
+
+    raise ValueError("首次运行必须指定 --output-folder；之后未指定时会沿用上次实验数据文件夹")
 
 
 def _build_steps(params: Dict, total_duration: int, mfc_port: str) -> List[Dict]:
@@ -127,7 +168,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="Build a plan or run the experiment")
     run_parser.add_argument("request", nargs="+", help="Natural-language experiment request")
-    run_parser.add_argument("--output-folder", required=True, help="Experiment output folder")
+    run_parser.add_argument("--output-folder", help="Experiment output folder; omitted runs reuse the last folder")
     run_parser.add_argument("--mfc-port", required=True, help="Confirmed MFC COM port")
     run_parser.add_argument("--sensor-name", help="Override parsed sensor name")
     run_parser.add_argument("--instrument", choices=["powermeter", "fbg"], help="Override instrument")
@@ -150,9 +191,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     request = " ".join(args.request)
+    try:
+        output_folder = resolve_output_folder(args.output_folder)
+    except ValueError as e:
+        parser.error(str(e))
+        return 2
+
     plan = build_run_plan(
         request=request,
-        output_folder=args.output_folder,
+        output_folder=output_folder,
         mfc_port=args.mfc_port,
         dry_run=args.dry_run,
         sensor_name=args.sensor_name,
@@ -178,7 +225,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     result = run_hydrogen_experiment(
         request=request,
-        output_folder=args.output_folder,
+        output_folder=output_folder,
         mfc_port=args.mfc_port,
         total_duration=plan["total_duration"],
         loop_interval=args.loop_interval,
