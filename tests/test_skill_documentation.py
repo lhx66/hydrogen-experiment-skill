@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_DIR = ROOT / "skills" / "hydrogen_experiment"
 SKILL_MD = SKILL_DIR / "SKILL.md"
+REFERENCES_DIR = SKILL_DIR / "references"
 
 
 class SkillDocumentationTests(unittest.TestCase):
@@ -30,6 +31,9 @@ class SkillDocumentationTests(unittest.TestCase):
             "传感器名称",
             "循环次数",
             "氢气浓度",
+            "参数化通氢流程",
+            "`h2:<浓度%>:<秒>`",
+            "`wait:<秒>`",
             "MFC2载气流量",
             "MFC串口",
             "根据串口名称推荐最可能的 MFC 端口",
@@ -93,10 +97,15 @@ class SkillDocumentationTests(unittest.TestCase):
             "cli_tools/experiment_cli.py",
             "python cli_tools/experiment_cli.py run",
             "--dry-run",
+            "--instrument fbg",
+            "--loop-count 3",
+            "--step h2:3:20",
+            "--step wait:10",
             "FBG 解调仪固定为 192.168.1.1:1000",
             "功率计固定为 TCPIP0::192.169.1.102::inst0::INSTR",
             "不要向用户询问 FBG 解调仪地址、FBG 端口或功率计地址",
-            "总程序会负责解析自然语言、连接 MFC、连接采集设备、设置 MFC 流量、等待稳定、启动数据记录、通氢、恢复和清理",
+            "agent 负责理解用户自然语言并转换为参数；`experiment_cli.py` 不接受自然语言位置参数",
+            "按顺序执行所有 `--step`",
             "它会在实验 JSON 中列出每轮 CSV 文件路径",
         ]
 
@@ -104,12 +113,14 @@ class SkillDocumentationTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
 
+        self.assertNotIn('python cli_tools/experiment_cli.py run "进行', text)
+
     def test_skill_bolds_critical_agent_instructions(self):
         text = SKILL_MD.read_text(encoding="utf-8")
 
         required_bold_phrases = [
             "**优先使用总程序**",
-            "**必须先确认实验结果保存文件夹、传感器名称、MFC串口、氢气浓度、循环次数和通氢时间**",
+            "**必须先确认实验结果保存文件夹、传感器名称、MFC串口、测量仪器、循环次数和参数化通氢流程**",
             "**FBG 解调仪固定为 192.168.1.1:1000**",
             "**功率计固定为 TCPIP0::192.169.1.102::inst0::INSTR**",
             "**超过4.0% 的氢气浓度必须先获得明确授权**",
@@ -165,6 +176,36 @@ class SkillDocumentationTests(unittest.TestCase):
         for phrase in required_phrases:
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
+
+    def test_skill_is_written_by_experiment_stage_and_links_references(self):
+        text = SKILL_MD.read_text(encoding="utf-8")
+
+        required_stage_headings = [
+            "## 阶段总览",
+            "### 阶段0：任务启动与信息确认",
+            "### 阶段1：安全门禁",
+            "### 阶段2：dry-run计划确认",
+            "### 阶段3：正式运行与设备连接",
+            "### 阶段4：单轮循环执行",
+            "### 阶段5：单轮数据分析",
+            "### 阶段6：全部循环结束",
+            "### 阶段7：异常停止与排查",
+        ]
+
+        for heading in required_stage_headings:
+            with self.subTest(heading=heading):
+                self.assertIn(heading, text)
+
+        required_links = [
+            "references/cli-reference.md",
+            "references/reporting-format.md",
+        ]
+        for link in required_links:
+            with self.subTest(link=link):
+                self.assertIn(link, text)
+
+        self.assertTrue((REFERENCES_DIR / "cli-reference.md").exists())
+        self.assertTrue((REFERENCES_DIR / "reporting-format.md").exists())
 
 
 if __name__ == "__main__":

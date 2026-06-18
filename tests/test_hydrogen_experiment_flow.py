@@ -85,6 +85,89 @@ class HydrogenExperimentFlowTests(unittest.TestCase):
 
         self.assertEqual(params["h2_flow"], 30.0)
 
+    def test_sequence_steps_support_multiple_hydrogen_pulses_and_waits(self):
+        steps = self.module.normalize_flow_steps(
+            [
+                {"type": "h2", "concentration": "3%", "duration_s": 20},
+                {"type": "wait", "duration_s": 10},
+                {"type": "h2", "concentration": "2%", "duration_s": 30},
+            ],
+            mfc2_flow=1.0,
+        )
+
+        self.assertEqual(
+            [(step["type"], step.get("concentration"), step["duration_s"], step.get("h2_flow")) for step in steps],
+            [("h2", "3%", 20, 30.0), ("wait", None, 10, None), ("h2", "2%", 30, 20.0)],
+        )
+        self.assertEqual(self.module.calculate_flow_sequence_duration(steps), 60)
+
+    def test_sequence_experiment_uses_complex_flow_steps_without_embedded_analysis(self):
+        output_dir = ROOT / "tmp_test_output" / "sync_sequence"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
+        data_file = output_dir / "sequence_cycle1.csv"
+        skill = self.module.HydrogenExperimentSkill(output_folder=str(output_dir))
+        steps = self.module.normalize_flow_steps([
+            {"type": "h2", "concentration": "3%", "duration_s": 20},
+            {"type": "wait", "duration_s": 10},
+            {"type": "h2", "concentration": "2%", "duration_s": 30},
+        ])
+
+        with patch.object(skill, "_connect_mfc_direct", return_value=True), \
+             patch.object(skill, "_connect_fbg", return_value=True), \
+             patch.object(skill, "_run_sequence_cycle", return_value={
+                 "cycle": 1,
+                 "data_file": str(data_file),
+                 "success": True,
+             }) as run_cycle, \
+             patch.object(skill, "_cleanup"), \
+             patch.object(self.module, "analyze_sensor_data") as analyze_data, \
+             redirect_stdout(io.StringIO()):
+            result = skill.run_sequence_experiment(
+                sensor_name="sensor_A",
+                flow_steps=steps,
+                loop_count=5,
+                instrument="fbg",
+                total_duration=90,
+                mfc_port="COM7",
+                loop_interval=0,
+            )
+
+        self.assertEqual(run_cycle.call_count, 5)
+        call_kwargs = run_cycle.call_args.kwargs
+        self.assertEqual(call_kwargs["flow_steps"], steps)
+        self.assertEqual(result["loop_count"], 5)
+        self.assertEqual(result["total_duration"], 90)
+        self.assertEqual(result["flow_steps"], steps)
+        self.assertFalse(result["combined_plot_saved"])
+        analyze_data.assert_not_called()
+
+    def test_sequence_above_four_percent_requires_authorization_before_devices_connect(self):
+        output_dir = ROOT / "tmp_test_output" / "sequence_safety_block"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
+        skill = self.module.HydrogenExperimentSkill(output_folder=str(output_dir))
+        steps = self.module.normalize_flow_steps([
+            {"type": "h2", "concentration": "4.1%", "duration_s": 20},
+        ])
+
+        with patch.object(skill, "_connect_mfc_direct") as connect_mfc:
+            with redirect_stdout(io.StringIO()):
+                result = skill.run_sequence_experiment(
+                    sensor_name="sensor_A",
+                    flow_steps=steps,
+                    loop_count=1,
+                    instrument="fbg",
+                    mfc_port="COM7",
+                )
+
+        self.assertTrue(result["safety_blocked"])
+        self.assertIn("4.1%", result["error"])
+        connect_mfc.assert_not_called()
+        self.assertEqual(list(output_dir.iterdir()), [])
+
     def test_above_four_percent_requires_explicit_authorization_before_devices_connect(self):
         skill = self.module.HydrogenExperimentSkill(output_folder=str(ROOT / "tmp_test_output"))
 

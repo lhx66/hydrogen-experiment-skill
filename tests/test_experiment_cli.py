@@ -4,7 +4,7 @@ import json
 import sys
 import types
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -47,22 +47,27 @@ class ExperimentCliTests(unittest.TestCase):
         if self.state_file.exists():
             self.state_file.unlink()
 
-    def test_build_plan_from_natural_language_uses_fixed_device_addresses(self):
+    def test_build_plan_from_parameterized_steps_uses_fixed_device_addresses(self):
+        flow_steps = self.experiment_cli.parse_step_specs(["h2:3:20"], mfc2_flow=1.0)
+
         plan = self.experiment_cli.build_run_plan(
-            request="进行1次3%氢气测试，每次20秒，使用FBG测量",
             output_folder=str(ROOT / "tmp_test_output"),
             mfc_port="COM7",
+            sensor_name="sensor_A",
+            instrument="fbg",
+            loop_count=1,
+            flow_steps=flow_steps,
             dry_run=True,
         )
 
-        self.assertEqual(plan["request"], "进行1次3%氢气测试，每次20秒，使用FBG测量")
+        self.assertNotIn("request", plan)
         self.assertEqual(plan["mfc_port"], "COM7")
         self.assertEqual(plan["instrument"], "fbg")
         self.assertEqual(plan["fbg_ip"], "192.168.1.1")
         self.assertEqual(plan["fbg_port"], 1000)
         self.assertEqual(plan["powermeter_resource"], "TCPIP0::192.169.1.102::inst0::INSTR")
         self.assertEqual(plan["mfc2_flow"], 1.0)
-        self.assertEqual(plan["h2_flow"], 30.0)
+        self.assertEqual(plan["flow_steps"][0]["h2_flow"], 30.0)
         self.assertEqual(
             [step["action"] for step in plan["steps"]],
             [
@@ -74,6 +79,7 @@ class ExperimentCliTests(unittest.TestCase):
                 "set_mfc1_flow",
                 "wait_h2",
                 "close_mfc1",
+                "close_mfc1",
                 "wait_recovery",
                 "cleanup",
             ],
@@ -81,31 +87,39 @@ class ExperimentCliTests(unittest.TestCase):
         self.assertEqual(
             [step["phase"] for step in plan["steps"]],
             [
-                "连接设备",
-                "连接设备",
-                "打开MFC2载气",
-                "等待稳定",
-                "启动数据记录",
-                "执行用户流程",
-                "执行用户流程",
-                "恢复阶段",
-                "恢复阶段",
-                "清理设备",
+                "connect_devices",
+                "connect_devices",
+                "open_carrier",
+                "stabilize_carrier",
+                "record_data",
+                "run_user_flow",
+                "run_user_flow",
+                "run_user_flow",
+                "recovery",
+                "recovery",
+                "cleanup",
             ],
         )
 
     def test_dry_run_prints_plan_without_starting_hardware(self):
         stdout = io.StringIO()
 
-        with patch.object(self.experiment_cli, "run_hydrogen_experiment") as run_experiment:
+        with patch.object(self.experiment_cli, "run_parameterized_hydrogen_experiment") as run_experiment:
             with redirect_stdout(stdout):
                 exit_code = self.experiment_cli.main([
                     "run",
-                    "进行1次3%氢气测试，每次20秒，使用功率计测量",
                     "--output-folder",
                     str(ROOT / "tmp_test_output"),
                     "--mfc-port",
                     "COM7",
+                    "--sensor-name",
+                    "sensor_A",
+                    "--instrument",
+                    "powermeter",
+                    "--loop-count",
+                    "1",
+                    "--step",
+                    "h2:3:20",
                     "--dry-run",
                 ])
 
@@ -113,23 +127,37 @@ class ExperimentCliTests(unittest.TestCase):
         run_experiment.assert_not_called()
         plan = json.loads(stdout.getvalue())
         self.assertEqual(plan["instrument"], "powermeter")
+        self.assertEqual(plan["sensor_name"], "sensor_A")
+        self.assertEqual(plan["loop_count"], 1)
+        self.assertEqual(plan["flow_steps"][0]["concentration"], "3%")
         self.assertEqual(plan["powermeter_resource"], "TCPIP0::192.169.1.102::inst0::INSTR")
         self.assertEqual(
             self.experiment_cli.load_last_output_folder(),
             str(ROOT / "tmp_test_output"),
         )
 
-    def test_dry_run_reuses_last_output_folder_when_not_provided(self):
+    def test_dry_run_supports_complex_flow_sequence(self):
         self.experiment_cli.save_last_output_folder(str(ROOT / "tmp_test_output" / "reused_folder"))
         stdout = io.StringIO()
 
-        with patch.object(self.experiment_cli, "run_hydrogen_experiment") as run_experiment:
+        with patch.object(self.experiment_cli, "run_parameterized_hydrogen_experiment") as run_experiment:
             with redirect_stdout(stdout):
                 exit_code = self.experiment_cli.main([
                     "run",
-                    "进行1次3%氢气测试，每次20秒，使用功率计测量",
                     "--mfc-port",
                     "COM7",
+                    "--sensor-name",
+                    "sensor_A",
+                    "--instrument",
+                    "fbg",
+                    "--loop-count",
+                    "5",
+                    "--step",
+                    "h2:3:20",
+                    "--step",
+                    "wait:10",
+                    "--step",
+                    "h2:2:30",
                     "--dry-run",
                 ])
 
@@ -137,21 +165,35 @@ class ExperimentCliTests(unittest.TestCase):
         run_experiment.assert_not_called()
         plan = json.loads(stdout.getvalue())
         self.assertEqual(plan["output_folder"], str(ROOT / "tmp_test_output" / "reused_folder"))
+        self.assertEqual(plan["loop_count"], 5)
+        self.assertEqual(plan["sequence_duration"], 60)
+        self.assertEqual(plan["total_duration"], 90)
+        self.assertEqual(
+            [(step["type"], step.get("concentration"), step["duration_s"]) for step in plan["flow_steps"]],
+            [("h2", "3%", 20), ("wait", None, 10), ("h2", "2%", 30)],
+        )
 
     def test_run_calls_existing_runner_with_minimal_arguments(self):
         with patch.object(
             self.experiment_cli,
-            "run_hydrogen_experiment",
+            "run_parameterized_hydrogen_experiment",
             return_value={"overall_success": True},
         ) as run_experiment:
             with redirect_stdout(io.StringIO()):
                 exit_code = self.experiment_cli.main([
                     "run",
-                    "进行1次3%氢气测试，每次20秒，使用FBG测量",
                     "--output-folder",
                     str(ROOT / "tmp_test_output"),
                     "--mfc-port",
                     "COM7",
+                    "--sensor-name",
+                    "sensor_A",
+                    "--instrument",
+                    "fbg",
+                    "--loop-count",
+                    "1",
+                    "--step",
+                    "h2:3:20",
                     "--authorize-high-concentration",
                     "--save-artifacts",
                 ])
@@ -161,8 +203,29 @@ class ExperimentCliTests(unittest.TestCase):
         kwargs = run_experiment.call_args.kwargs
         self.assertEqual(kwargs["output_folder"], str(ROOT / "tmp_test_output"))
         self.assertEqual(kwargs["mfc_port"], "COM7")
+        self.assertEqual(kwargs["sensor_name"], "sensor_A")
+        self.assertEqual(kwargs["flow_steps"][0]["concentration"], "3%")
         self.assertTrue(kwargs["high_concentration_authorized"])
         self.assertTrue(kwargs["save_artifacts"])
+
+    def test_run_rejects_natural_language_positional_request(self):
+        stderr = io.StringIO()
+        with self.assertRaises(SystemExit):
+            with redirect_stderr(stderr), redirect_stdout(io.StringIO()):
+                self.experiment_cli.main([
+                    "run",
+                    "--mfc-port",
+                    "COM7",
+                    "--sensor-name",
+                    "sensor_A",
+                    "--instrument",
+                    "fbg",
+                    "--step",
+                    "h2:3:20",
+                    "run three cycles of hydrogen",
+                ])
+
+        self.assertIn("unrecognized arguments", stderr.getvalue())
 
 
 if __name__ == "__main__":

@@ -337,7 +337,7 @@ description: 自动化执行光纤氢气传感器实验
 ~~~bash
 cd "$CANONICAL_DIR"
 source cli_tools/env_setup.sh
-python cli_tools/experiment_cli.py run "进行十次4%氢气测试，每次40秒，使用功率计测量" --output-folder "E:/experiments/2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --dry-run
+python cli_tools/experiment_cli.py run --output-folder "E:/experiments/2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --instrument powermeter --loop-count 10 --step h2:4:40 --dry-run
 ~~~
 EOF
         success "斜杠命令注册成功: /$COMMAND_NAME"
@@ -370,7 +370,7 @@ description: 自动化执行光纤氢气传感器实验
 ~~~bash
 cd "$CANONICAL_DIR"
 source cli_tools/env_setup.sh
-python cli_tools/experiment_cli.py run "进行十次4%氢气测试，每次40秒，使用功率计测量" --output-folder "E:/experiments/2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --dry-run
+python cli_tools/experiment_cli.py run --output-folder "E:/experiments/2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --instrument powermeter --loop-count 10 --step h2:4:40 --dry-run
 ~~~
 EOF
         success "注册 Codex 斜杠命令成功: /$COMMAND_NAME"

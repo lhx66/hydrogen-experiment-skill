@@ -10,15 +10,21 @@
 
 ## 总程序使用示例
 
-先 dry-run 查看阶段计划，不连接硬件：
+先 dry-run 查看阶段计划，不连接硬件。CLI 不接受自然语言位置参数，agent 需要先把用户需求转换为参数：
 
 ```bash
-python cli_tools\experiment_cli.py run "进行十次4%氢气测试，每次40秒，使用功率计测量" --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --dry-run
+python cli_tools\experiment_cli.py run --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --instrument powermeter --loop-count 10 --step h2:4:40 --dry-run
 ```
 
 确认后去掉 `--dry-run` 正式运行。总程序会负责连接设备、打开 MFC2 载气、等待稳定、启动数据记录、执行用户要求的通氢流程、恢复和清理，并输出每轮 CSV 路径。分析和绘图由 agent 单独调用 `analysis/` 下的脚本。
 
 如果用户未要求更换数据文件夹，后续命令可以省略 `--output-folder`，总程序会沿用上次实验数据文件夹。
+
+复杂流程示例：每轮先 3% 氢气 20 秒，等待 10 秒，再 2% 氢气 30 秒，循环 5 次：
+
+```bash
+python cli_tools\experiment_cli.py run --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --instrument fbg --loop-count 5 --step h2:3:20 --step wait:10 --step h2:2:30 --dry-run
+```
 
 固定设备地址：
 - FBG 解调仪：`192.168.1.1:1000`
@@ -98,12 +104,16 @@ Codex 刚安装或更新后请先重启；也可以直接说“使用 hydrogen-e
 Python 中直接调用：
 
 ```python
-from skills.hydrogen_experiment.hydrogen_experiment import run_hydrogen_experiment
+from skills.hydrogen_experiment.hydrogen_experiment import run_parameterized_hydrogen_experiment
 
 # 运行实验
-result = run_hydrogen_experiment(
-    request="进行十次4%氢气测试，每次40秒，使用功率计测量",
-    output_folder="E:/experiments"
+result = run_parameterized_hydrogen_experiment(
+    output_folder="E:/experiments",
+    mfc_port="COM3",
+    sensor_name="sensor_A",
+    instrument="powermeter",
+    loop_count=10,
+    flow_steps=[{"type": "h2", "concentration": "4%", "duration_s": 40}],
 )
 ```
 

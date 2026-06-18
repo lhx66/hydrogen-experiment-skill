@@ -226,6 +226,96 @@ def build_experiment_file_stem(sensor_name: str,
     return '_'.join(parts)
 
 
+def normalize_flow_steps(flow_steps: List[Dict],
+                         mfc2_flow: float = DEFAULT_MFC2_FLOW_SLM) -> List[Dict]:
+    """Normalize parameterized flow steps for a sequence experiment."""
+    normalized = []
+    for index, step in enumerate(flow_steps, start=1):
+        step_type = str(step.get('type', '')).strip().lower()
+        duration = int(step.get('duration_s', step.get('duration', 0)))
+        if duration < 0:
+            raise ValueError(f"步骤 {index} 时长不能为负数")
+
+        if step_type in ('h2', 'hydrogen'):
+            if duration <= 0:
+                raise ValueError(f"步骤 {index} 通氢时间必须大于0")
+            concentration_value = step.get('concentration_percent')
+            if concentration_value is None:
+                concentration_value = parse_concentration_percent(step.get('concentration'))
+            concentration_percent = float(concentration_value)
+            concentration = format_concentration(concentration_percent)
+            normalized.append({
+                'type': 'h2',
+                'concentration': concentration,
+                'concentration_percent': concentration_percent,
+                'duration_s': duration,
+                'h2_flow': calculate_h2_flow_sccm(concentration_percent, mfc2_flow),
+            })
+        elif step_type in ('wait', 'delay', 'pause'):
+            normalized.append({
+                'type': 'wait',
+                'duration_s': duration,
+            })
+        else:
+            raise ValueError(f"步骤 {index} 类型无效: {step_type}")
+
+    if not any(step['type'] == 'h2' for step in normalized):
+        raise ValueError("实验流程至少需要一个 h2 步骤")
+    return normalized
+
+
+def calculate_flow_sequence_duration(flow_steps: List[Dict]) -> int:
+    return sum(int(step.get('duration_s', 0)) for step in flow_steps)
+
+
+def max_flow_sequence_concentration(flow_steps: List[Dict]) -> float:
+    h2_values = [
+        float(step.get('concentration_percent', 0.0))
+        for step in flow_steps
+        if step.get('type') == 'h2'
+    ]
+    return max(h2_values) if h2_values else 0.0
+
+
+def build_flow_sequence_label(flow_steps: List[Dict]) -> str:
+    parts = []
+    for step in flow_steps:
+        duration = int(step['duration_s'])
+        if step['type'] == 'h2':
+            parts.append(f"H2-{_safe_filename_part(step['concentration'])}-{duration}s")
+        else:
+            parts.append(f"wait-{duration}s")
+    return '_'.join(parts)
+
+
+def build_sequence_file_stem(sensor_name: str,
+                             flow_steps: List[Dict],
+                             mfc2_flow: Optional[float] = None,
+                             total_duration: Optional[int] = None,
+                             instrument: Optional[str] = None,
+                             fbg_channel: Optional[int] = None,
+                             cycle: Optional[int] = None,
+                             suffix: Optional[str] = None) -> str:
+    parts = [
+        _safe_filename_part(sensor_name),
+        build_flow_sequence_label(flow_steps),
+    ]
+    if mfc2_flow is not None:
+        parts.append(f"MFC2-{_format_filename_number(mfc2_flow)}slm")
+    if total_duration is not None:
+        parts.append(f"Record-{int(total_duration)}s")
+    if instrument:
+        instrument_label = 'FBG' if str(instrument).lower() == 'fbg' else _safe_filename_part(instrument)
+        if str(instrument).lower() == 'fbg' and fbg_channel is not None:
+            instrument_label = f"{instrument_label}-ch{int(fbg_channel)}"
+        parts.append(instrument_label)
+    if cycle is not None:
+        parts.append(f"cycle{int(cycle):02d}")
+    if suffix:
+        parts.append(_safe_filename_part(suffix))
+    return '_'.join(parts)
+
+
 def require_high_concentration_authorization(concentration_percent: float,
                                              high_concentration_authorized: bool = False) -> None:
     if concentration_percent > HIGH_CONCENTRATION_AUTH_LIMIT_PERCENT and not high_concentration_authorized:
@@ -533,6 +623,144 @@ class HydrogenExperimentSkill:
 
         return results
 
+    def run_sequence_experiment(self,
+                                sensor_name: str,
+                                flow_steps: List[Dict],
+                                loop_count: int,
+                                instrument: str,
+                                total_duration: Optional[int] = None,
+                                mfc2_flow: float = DEFAULT_MFC2_FLOW_SLM,
+                                loop_interval: int = 60,
+                                mfc_port: str = 'COM3',
+                                powermeter_resource: str = DEFAULT_POWERMETER_RESOURCE,
+                                fbg_ip: str = DEFAULT_FBG_IP,
+                                fbg_port: int = DEFAULT_FBG_PORT,
+                                fbg_channel: int = DEFAULT_FBG_CHANNEL,
+                                high_concentration_authorized: bool = False,
+                                save_artifacts: bool = False) -> Dict:
+        """Run a parameterized experiment with h2/wait flow steps."""
+        try:
+            flow_steps = normalize_flow_steps(flow_steps, mfc2_flow)
+        except Exception as e:
+            return {
+                'sensor_name': sensor_name,
+                'flow_steps': flow_steps,
+                'loop_count': loop_count,
+                'instrument': instrument,
+                'overall_success': False,
+                'error': str(e),
+            }
+
+        sequence_duration = calculate_flow_sequence_duration(flow_steps)
+        if total_duration is None:
+            total_duration = sequence_duration + 30
+
+        sequence_label = build_flow_sequence_label(flow_steps)
+        experiment_name = build_sequence_file_stem(
+            sensor_name=sensor_name,
+            flow_steps=flow_steps,
+            mfc2_flow=mfc2_flow,
+            total_duration=total_duration,
+            instrument=instrument,
+            fbg_channel=fbg_channel,
+        )
+        experiment_path = self.experiment_dir / experiment_name
+
+        results = {
+            'sensor_name': sensor_name,
+            'concentration': sequence_label,
+            'flow_profile': sequence_label,
+            'flow_steps': flow_steps,
+            'mfc2_flow': mfc2_flow,
+            'sequence_duration': sequence_duration,
+            'total_duration': total_duration,
+            'loop_count': loop_count,
+            'instrument': instrument,
+            'fbg_channel': fbg_channel if instrument == 'fbg' else None,
+            'fbg_ip': fbg_ip if instrument == 'fbg' else None,
+            'fbg_port': fbg_port if instrument == 'fbg' else None,
+            'powermeter_resource': powermeter_resource if instrument == 'powermeter' else None,
+            'experiment_path': str(experiment_path),
+            'cycles': [],
+            'overall_success': False,
+            'high_concentration_authorized': bool(high_concentration_authorized),
+        }
+
+        max_concentration = max_flow_sequence_concentration(flow_steps)
+        try:
+            require_high_concentration_authorization(max_concentration, high_concentration_authorized)
+        except PermissionError as e:
+            results['error'] = str(e)
+            results['safety_blocked'] = True
+            print(f"SAFETY BLOCK: {e}")
+            return results
+
+        if int(total_duration) < sequence_duration:
+            results['error'] = '每轮记录总时长不能短于通氢流程总时长'
+            print(f"FAIL {results['error']}")
+            return results
+
+        experiment_path.mkdir(exist_ok=True)
+        self.cycle_plots = []
+
+        try:
+            print("\n[1/4] 连接MFC...")
+            if not self._connect_mfc_direct(mfc_port, mfc2_flow):
+                raise Exception("MFC连接失败")
+
+            print(f"\n[2/4] 连接{instrument}...")
+            if instrument == "powermeter":
+                if not self._connect_powermeter(powermeter_resource):
+                    raise Exception("功率计连接失败")
+            else:
+                if not self._connect_fbg(fbg_ip, fbg_port):
+                    raise Exception("FBG解调仪连接失败")
+
+            print(f"\n[3/4] 开始参数化实验循环...")
+            for cycle in range(1, loop_count + 1):
+                print(f"\n--- 循环 {cycle}/{loop_count} ---")
+                cycle_result = self._run_sequence_cycle(
+                    cycle=cycle,
+                    experiment_path=experiment_path,
+                    sensor_name=sensor_name,
+                    flow_steps=flow_steps,
+                    total_duration=total_duration,
+                    mfc2_flow=mfc2_flow,
+                    instrument=instrument,
+                    powermeter_resource=powermeter_resource,
+                    fbg_ip=fbg_ip,
+                    fbg_port=fbg_port,
+                    fbg_channel=fbg_channel,
+                )
+                results['cycles'].append(cycle_result)
+                if cycle_result.get('data_file'):
+                    self.cycle_plots.append((cycle, cycle_result['data_file']))
+                    print(f"  OK 本轮CSV已生成: {cycle_result['data_file']}")
+
+                if cycle < loop_count:
+                    print(f"  循环间隔等待 {loop_interval} 秒...")
+                    time.sleep(loop_interval)
+
+            print(f"\n[4/4] 关闭设备...")
+            self._cleanup()
+            results['overall_success'] = True
+            print("\nOK 实验完成!")
+
+            self._finalize_experiment_outputs(
+                results=results,
+                cycle_files=self.cycle_plots,
+                experiment_path=experiment_path,
+                sensor_name=sensor_name,
+                concentration=sequence_label,
+                save_artifacts=save_artifacts,
+            )
+        except Exception as e:
+            print(f"\nFAIL 实验失败: {e}")
+            self._cleanup()
+            results['error'] = str(e)
+
+        return results
+
     def _finalize_experiment_outputs(self,
                                      results: Dict,
                                      cycle_files: List[Tuple[int, str]],
@@ -643,6 +871,151 @@ class HydrogenExperimentSkill:
         except Exception as e:
             print(f"FBG连接异常: {e}")
             return False
+
+    def _run_sequence_cycle(self,
+                            cycle: int,
+                            experiment_path: Path,
+                            sensor_name: str,
+                            flow_steps: List[Dict],
+                            total_duration: int,
+                            mfc2_flow: float,
+                            instrument: str,
+                            powermeter_resource: str = DEFAULT_POWERMETER_RESOURCE,
+                            fbg_ip: str = DEFAULT_FBG_IP,
+                            fbg_port: int = DEFAULT_FBG_PORT,
+                            fbg_channel: int = DEFAULT_FBG_CHANNEL) -> Dict:
+        """执行一轮参数化通氢流程。"""
+        filename = build_sequence_file_stem(
+            sensor_name=sensor_name,
+            flow_steps=flow_steps,
+            mfc2_flow=mfc2_flow,
+            total_duration=total_duration,
+            instrument=instrument,
+            fbg_channel=fbg_channel,
+            cycle=cycle,
+        )
+        data_file = experiment_path / f"{filename}.csv"
+        cycle_result = {
+            'cycle': cycle,
+            'filename': filename,
+            'flow_steps': flow_steps,
+            'start_time': datetime.now().isoformat(),
+        }
+        data_process = None
+
+        try:
+            if instrument == "powermeter":
+                data_process = self._start_powermeter_acquisition(
+                    filename=str(experiment_path / filename),
+                    duration=total_duration,
+                    resource=powermeter_resource,
+                )
+            else:
+                data_process = self._start_fbg_acquisition(
+                    filename=str(experiment_path / filename),
+                    duration=total_duration,
+                    fbg_ip=fbg_ip,
+                    fbg_port=fbg_port,
+                    channel=fbg_channel,
+                )
+
+            time.sleep(1)
+
+            elapsed = 0
+            for step_index, step in enumerate(flow_steps, start=1):
+                duration = int(step['duration_s'])
+                if step['type'] == 'h2':
+                    h2_flow = float(step['h2_flow'])
+                    print(
+                        f"  步骤 {step_index}: 打开MFC1 "
+                        f"({step['concentration']}, {h2_flow:g} sccm) {duration}秒"
+                    )
+                    if self.mfc_controller:
+                        if not self.mfc_controller.set_flow(self.mfc_controller.addresses[0], h2_flow):
+                            print("  警告: MFC1设置命令发送失败")
+                    else:
+                        subprocess.run(
+                            [sys.executable, str(self.mfc_cli_path), 'set', '--channel', '1', '--flow', str(h2_flow)],
+                            capture_output=True,
+                            text=True,
+                        )
+
+                    for second in range(duration):
+                        flow1 = self.mfc_controller.get_flow(self.mfc_controller.addresses[0]) if self.mfc_controller else h2_flow
+                        flow2 = self.mfc_controller.get_flow(self.mfc_controller.addresses[1]) if self.mfc_controller else mfc2_flow
+                        print(
+                            f"\r    MFC1: {flow1:.1f} sccm | MFC2: {flow2:.3f} slm "
+                            f"({second + 1}/{duration}s)",
+                            end='',
+                            flush=True,
+                        )
+                        time.sleep(1)
+                    print()
+                    elapsed += duration
+
+                    print("  关闭MFC1")
+                    if self.mfc_controller:
+                        self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
+                    else:
+                        subprocess.run(
+                            [sys.executable, str(self.mfc_cli_path), 'close', '--channel', '1'],
+                            capture_output=True,
+                            text=True,
+                        )
+                else:
+                    print(f"  步骤 {step_index}: 等待 {duration} 秒")
+                    if self.mfc_controller:
+                        self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
+                    for second in range(duration):
+                        print(f"\r    等待中... ({second + 1}/{duration}s)", end='', flush=True)
+                        time.sleep(1)
+                    print()
+                    elapsed += duration
+
+            remaining_time = max(0, int(total_duration) - elapsed)
+            if remaining_time > 0:
+                print(f"  恢复阶段等待 {remaining_time} 秒...")
+                if self.mfc_controller:
+                    self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
+                for second in range(remaining_time):
+                    print(f"\r    恢复中... ({second + 1}/{remaining_time}s)", end='', flush=True)
+                    time.sleep(1)
+                print()
+
+            if data_process:
+                return_code = self._wait_for_data_process(data_process, timeout=15)
+                data_process = None
+                if return_code not in (0, None):
+                    print(f"  警告: 数据采集进程退出码 {return_code}")
+
+            actual_data_file = self._find_generated_csv(experiment_path, filename)
+            cycle_result['data_file'] = str(actual_data_file or data_file)
+            cycle_result['success'] = True
+
+        except KeyboardInterrupt:
+            print("\n  用户中断，关闭MFC1...")
+            if self.mfc_controller:
+                self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
+            raise
+        except Exception as e:
+            print(f"  循环失败: {e}")
+            if self.mfc_controller:
+                self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
+            cycle_result['success'] = False
+            cycle_result['error'] = str(e)
+        finally:
+            if data_process:
+                try:
+                    data_process.wait(timeout=5)
+                except Exception:
+                    try:
+                        data_process.terminate()
+                        data_process.wait(timeout=5)
+                    except Exception:
+                        data_process.kill()
+
+        cycle_result['end_time'] = datetime.now().isoformat()
+        return cycle_result
 
     def _run_single_cycle(self,
                           cycle: int,
@@ -919,6 +1292,41 @@ def run_hydrogen_experiment(request: str,
     )
 
     return result
+
+
+def run_parameterized_hydrogen_experiment(output_folder: Optional[str],
+                                          sensor_name: str,
+                                          flow_steps: List[Dict],
+                                          loop_count: int,
+                                          instrument: str,
+                                          mfc_port: str = 'COM3',
+                                          total_duration: Optional[int] = None,
+                                          mfc2_flow: float = DEFAULT_MFC2_FLOW_SLM,
+                                          loop_interval: int = 60,
+                                          powermeter_resource: str = DEFAULT_POWERMETER_RESOURCE,
+                                          fbg_ip: str = DEFAULT_FBG_IP,
+                                          fbg_port: int = DEFAULT_FBG_PORT,
+                                          fbg_channel: int = DEFAULT_FBG_CHANNEL,
+                                          high_concentration_authorized: bool = False,
+                                          save_artifacts: bool = False) -> Dict:
+    """Run a parameterized hydrogen experiment without natural-language parsing."""
+    skill = HydrogenExperimentSkill(output_folder=output_folder)
+    return skill.run_sequence_experiment(
+        sensor_name=sensor_name,
+        flow_steps=flow_steps,
+        loop_count=loop_count,
+        instrument=instrument,
+        total_duration=total_duration,
+        mfc2_flow=mfc2_flow,
+        loop_interval=loop_interval,
+        mfc_port=mfc_port,
+        powermeter_resource=powermeter_resource,
+        fbg_ip=fbg_ip,
+        fbg_port=fbg_port,
+        fbg_channel=fbg_channel,
+        high_concentration_authorized=high_concentration_authorized,
+        save_artifacts=save_artifacts,
+    )
 
 
 def save_hydrogen_experiment_artifacts(results: Dict,
