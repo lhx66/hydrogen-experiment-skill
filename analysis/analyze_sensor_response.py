@@ -186,20 +186,20 @@ def analyze_sensor_data(csv_file, time_column='Relative_Time(s)',
     参数：
         csv_file: CSV文件路径
         time_column: 时间列名
-        value_column: 数值列名
+        value_column: Value column name
         window_size: 检测窗口大小
         n_sigma: sigma阈值倍数
         consecutive_n: 连续超出点数
 
     返回：
-        dict: 分析结果
+        dict: Analysis
     """
     # 读取CSV文件
     try:
         df = pd.read_csv(csv_file)
     except Exception as e:
         return {
-            'error': f'无法读取文件: {e}',
+            'error': f'Read failed: {e}',
             'file': str(csv_file)
         }
 
@@ -213,7 +213,7 @@ def analyze_sensor_data(csv_file, time_column='Relative_Time(s)',
                 break
         else:
             return {
-                'error': f'找不到数值列，可用列: {list(df.columns)}',
+                'error': f'Value column not found. Columns: {list(df.columns)}',
                 'file': str(csv_file)
             }
 
@@ -222,7 +222,7 @@ def analyze_sensor_data(csv_file, time_column='Relative_Time(s)',
 
     if len(data) < window_size * 2:
         return {
-            'error': f'数据点太少 ({len(data)} < {window_size * 2})',
+            'error': f'Too few points ({len(data)} < {window_size * 2})',
             'file': str(csv_file)
         }
 
@@ -272,14 +272,14 @@ def batch_analyze(csv_files, output_json=None, window_size=30, n_sigma=3,
 
     参数：
         csv_files: CSV文件列表
-        output_json: 输出JSON文件路径（可选）
+        output_json: Output JSON path（可选）
         window_size: 响应检测窗口大小
         n_sigma: 响应检测阈值倍数
         consecutive_n: 连续超阈值点数
-        value_column: 待分析的数值列名
+        value_column: 待分析的Value column name
 
     返回：
-        list: 分析结果列表
+        list: Analysis列表
     """
     results = []
 
@@ -297,17 +297,17 @@ def batch_analyze(csv_files, output_json=None, window_size=30, n_sigma=3,
         with open(output_json, 'w', encoding='utf-8') as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
         if not quiet:
-            print(f"结果已保存到: {output_json}")
+            print(f"Saved: {output_json}")
 
     return results
 
 
 def _build_arg_parser():
     parser = argparse.ArgumentParser(
-        description='传感器响应分析工具',
+        description='Sensor response analyzer',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例:
+Examples:
   %(prog)s analyze data.csv
   %(prog)s analyze data.csv --json
   %(prog)s analyze data.csv --window-size 50 --n-sigma 4
@@ -315,20 +315,20 @@ def _build_arg_parser():
   %(prog)s data.csv --output legacy_single_file.json
         """
     )
-    parser.add_argument('files', nargs='+', help='CSV数据文件')
-    parser.add_argument('--window-size', type=int, default=30, help='检测窗口大小 (默认30)')
-    parser.add_argument('--n-sigma', type=float, default=3, help='Sigma阈值倍数 (默认3)')
-    parser.add_argument('--consecutive-n', type=int, default=5, help='连续超出点数 (默认5)')
-    parser.add_argument('--value-column', default='Wavelength(nm)', help='数值列名')
-    parser.add_argument('--output', help='输出JSON文件路径')
-    parser.add_argument('--json', action='store_true', help='只把分析结果JSON打印到标准输出')
-    parser.add_argument('--verbose', action='store_true', help='详细输出')
+    parser.add_argument('files', nargs='+', help='CSV data files')
+    parser.add_argument('--window-size', type=int, default=30, help='Detection window size (default: 30)')
+    parser.add_argument('--n-sigma', type=float, default=3, help='Sigma threshold multiplier (default: 3)')
+    parser.add_argument('--consecutive-n', type=int, default=5, help='Consecutive threshold points (default: 5)')
+    parser.add_argument('--value-column', default='Wavelength(nm)', help='Value column name')
+    parser.add_argument('--output', help='Output JSON path')
+    parser.add_argument('--json', action='store_true', help='Print JSON only')
+    parser.add_argument('--verbose', action='store_true', help='Verbose output')
     return parser
 
 
 def _print_analysis_results(results):
     print("\n" + "=" * 60)
-    print("分析结果")
+    print("Analysis")
     print("=" * 60)
 
     for i, result in enumerate(results):
@@ -336,25 +336,25 @@ def _print_analysis_results(results):
         print(f"\n[{i+1}] {file_name}")
 
         if 'error' in result:
-            print(f"  错误: {result['error']}")
+            print(f"  Error: {result['error']}")
             continue
 
-        print(f"  数据点数: {result['data_points']}")
-        print(f"  基线: {result['baseline_mean']:.6f} ± {result['baseline_std']:.6f}")
+        print(f"  Points: {result['data_points']}")
+        print(f"  Baseline: {result['baseline_mean']:.6f} ± {result['baseline_std']:.6f}")
 
         if result['has_response']:
-            print(f"  OK 检测到响应")
-            print(f"  响应幅度: {result['response_amplitude']:.6f}")
-            print(f"  响应起始: {result['response_start_time']:.2f} 秒")
+            print(f"  OK Response detected")
+            print(f"  Amplitude: {result['response_amplitude']:.6f}")
+            print(f"  Start: {result['response_start_time']:.2f} s")
             if result.get('t90'):
-                print(f"  t90: {result['t90']:.2f} 秒")
+                print(f"  t90: {result['t90']:.2f} s")
             if result.get('recovery_time'):
-                print(f"  恢复时间: {result['recovery_time']:.2f} 秒")
-            print(f"  信噪比: {result['signal_to_noise']:.1f}")
+                print(f"  Recovery: {result['recovery_time']:.2f} s")
+            print(f"  SNR: {result['signal_to_noise']:.1f}")
             if result.get('estimated_concentration_percent'):
-                print(f"  估算浓度: {result['estimated_concentration_percent']}%")
+                print(f"  Est. concentration: {result['estimated_concentration_percent']}%")
         else:
-            print(f"  FAIL 未检测到响应")
+            print(f"  FAIL No response")
 
     print("\n" + "=" * 60)
 
@@ -389,7 +389,7 @@ def plot_response_curve(csv_file, result=None, title="Response Curve"):
 
     参数：
         csv_file: CSV文件路径
-        result: 分析结果字典（可选）
+        result: Analysis字典（可选）
         title: 图表标题
 
     返回：
@@ -460,7 +460,7 @@ def plot_response_curve(csv_file, result=None, title="Response Curve"):
         return base64_image
 
     except Exception as e:
-        print(f"绘图失败: {e}")
+        print(f"Plot failed: {e}")
         return None
 
 
@@ -511,7 +511,7 @@ def plot_multiple_cycles(cycle_files, output_path, title="All Response Cycles",
                        linewidth=1.5, alpha=0.8, label=f'Cycle {cycle_num}')
 
             except Exception as e:
-                print(f"读取循环 {cycle_num} 失败: {e}")
+                print(f"Read cycle {cycle_num} failed: {e}")
                 continue
 
         # 设置标题和标签
@@ -542,7 +542,7 @@ def plot_multiple_cycles(cycle_files, output_path, title="All Response Cycles",
         return True
 
     except Exception as e:
-        print(f"绘制多周期图表失败: {e}")
+        print(f"Multi-cycle plot failed: {e}")
         return False
 
 

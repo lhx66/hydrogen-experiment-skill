@@ -45,19 +45,19 @@ def _print_markdown_image(title, base64_image):
 
 def _build_parser():
     parser = argparse.ArgumentParser(
-        description="传感器响应曲线绘图工具",
+        description="Sensor response plotter",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例:
+Examples:
   python analysis/plot_sensor_response.py cycle01.csv --title "Cycle 1"
   python analysis/plot_sensor_response.py cycle01.csv cycle02.csv --output allcycles.png --title "All cycles"
         """,
     )
-    parser.add_argument("files", nargs="+", help="一个或多个 CSV 数据文件")
-    parser.add_argument("--output", help="PNG 输出路径；实验skill场景建议始终指定")
-    parser.add_argument("--title", default=None, help="图标题")
-    parser.add_argument("--sensor-name", default="", help="传感器名称，用于多组图标题")
-    parser.add_argument("--concentration", default="", help="氢气浓度，用于多组图标题")
+    parser.add_argument("files", nargs="+", help="One or more CSV files")
+    parser.add_argument("--output", help="PNG output path")
+    parser.add_argument("--title", default=None, help="Plot title")
+    parser.add_argument("--sensor-name", default="", help="Sensor name for multi-file title")
+    parser.add_argument("--concentration", default="", help="H2 concentration for multi-file title")
     return parser
 
 
@@ -72,11 +72,11 @@ def main(argv=None):
         analysis = analyze_sensor_data(files[0])
         base64_image = plot_response_curve(files[0], analysis, title=title)
         if not base64_image:
-            print("绘图失败")
+            print("Plot failed")
             return 1
         if args.output:
             output_path = _save_base64_png(base64_image, args.output)
-            print(f"图像已保存: {output_path}")
+            print(f"Saved: {output_path}")
         else:
             _print_markdown_image(title, base64_image)
         return 0
@@ -93,9 +93,9 @@ def main(argv=None):
             concentration=args.concentration,
         )
         if not success:
-            print("绘图失败")
+            print("Plot failed")
             return 1
-        print(f"图像已保存: {output_path}")
+        print(f"Saved: {output_path}")
         return 0
 
     base64_image = plot_multiple_cycles(
@@ -106,7 +106,7 @@ def main(argv=None):
         concentration=args.concentration,
     )
     if not base64_image:
-        print("绘图失败")
+        print("Plot failed")
         return 1
     _print_markdown_image(title, base64_image)
     return 0

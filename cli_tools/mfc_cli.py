@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MFC质量流量控制器命令行工具
+MFC CLI
 支持双通道MFC控制，MODBUS RTU协议
 """
 
@@ -49,20 +49,20 @@ class MFCCommand:
 
     @staticmethod
     def read_flow(address):
-        """读取瞬时流量 - 寄存器地址16"""
+        """读取瞬时流量 - 寄存器addr16"""
         cmd = bytes([address, 0x03, 0x00, 0x10, 0x00, 0x02])
         return cmd + crc16_modbus(cmd)
 
     @staticmethod
     def set_flow(address, value):
-        """设定流量 - 寄存器地址106"""
+        """设定流量 - 寄存器addr106"""
         cmd = bytes([address, 0x10, 0x00, 0x6A, 0x00, 0x02, 0x04])
         cmd += float_to_bytes_3412(value)
         return cmd + crc16_modbus(cmd)
 
     @staticmethod
     def set_control_mode(address, mode='digital'):
-        """设置控制方式 - 寄存器地址116"""
+        """设置控制方式 - 寄存器addr116"""
         value = 26.0 if mode == 'digital' else 25.0
         cmd = bytes([address, 0x10, 0x00, 0x74, 0x00, 0x02, 0x04])
         cmd += float_to_bytes_3412(value)
@@ -78,13 +78,15 @@ class MFCController:
         self.serial_port = None
         self.connected = False
         self.mutex = Lock()
-        self.addresses = [1, 2]  # 默认地址：MFC1=1, MFC2=2
+        self.addresses = [1, 2]  # 默认addr：MFC1=1, MFC2=2
         self.running = False
         self.monitor_thread = None
         self.flow_values = {1: 0.0, 2: 0.0}
         self.safety_callback = None
         self.safety_enabled = True
         self.mfc2_threshold = 0.1  # MFC2安全阈值 (slm)
+        self.stop_requested = False
+        self.stop_reason = None
 
     def connect(self, port, baudrate=9600):
         """连接串口"""
@@ -98,10 +100,10 @@ class MFCController:
                 timeout=0.2
             )
             self.connected = True
-            print(f"OK 已连接到 {port} (波特率: {baudrate})")
+            print(f"OK Connected: {port} (baud: {baudrate})")
             return True
         except Exception as e:
-            print(f"FAIL 连接失败: {e}")
+            print(f"FAIL Connect failed: {e}")
             return False
 
     def disconnect(self):
@@ -112,10 +114,10 @@ class MFCController:
         if self.serial_port:
             self.serial_port.close()
         self.connected = False
-        print("已断开连接")
+        print("Disconnected")
 
     def set_addresses(self, addr1, addr2):
-        """设置MFC地址"""
+        """设置MFCaddr"""
         self.addresses = [addr1, addr2]
 
     def _send_command(self, cmd, expected_len=9, max_retries=3):
@@ -190,15 +192,15 @@ class MFCController:
 
     def init_mfc_mode(self):
         """初始化两个MFC为数字控制模式"""
-        print("初始化MFC为数字控制模式...")
+        print("Init MFC digital mode...")
         success1 = self.set_digital_mode(self.addresses[0])
         success2 = self.set_digital_mode(self.addresses[1])
 
         if success1 and success2:
-            print("OK 所有MFC已设置为数字控制模式")
+            print("OK MFC digital mode set")
             return True
         else:
-            print("WARN 部分MFC设置失败，但继续尝试")
+            print("WARN Some MFC mode writes failed; continuing")
             return True
 
     def start_monitoring(self, interval=0.2):
@@ -218,36 +220,55 @@ class MFCController:
                 if flow is not None:
                     self.flow_values[address] = flow
 
-                    # 安全检查：MFC2流量过低时关闭MFC1
+                    # 安全检查：MFC2流量过低时Close MFC1
                     if address == self.addresses[1] and self.safety_enabled:
-                        if flow < self.mfc2_threshold:
-                            print(f"WARN 安全触发：MFC2流量过低 ({flow:.3f} < {self.mfc2_threshold})，关闭MFC1")
-                            self.set_flow(self.addresses[0], 0)
-                            if self.safety_callback:
-                                self.safety_callback('mfc2_low', flow)
+                        self._handle_mfc2_safety(flow)
 
                 channel = (channel + 1) % 2
                 time.sleep(interval)
             else:
                 time.sleep(0.1)
 
+    def request_stop(self, reason="Stop requested"):
+        """Request immediate experiment stop and close MFC1."""
+        self.stop_requested = True
+        self.stop_reason = reason
+        self.running = False
+        self.set_flow(self.addresses[0], 0)
+        return True
+
+    def clear_stop_request(self):
+        self.stop_requested = False
+        self.stop_reason = None
+
+    def _handle_mfc2_safety(self, flow):
+        if flow >= self.mfc2_threshold:
+            return False
+
+        reason = f"MFC2 flow low: {flow:.3f} slm"
+        if not self.stop_requested:
+            print(f"WARN Safety: {reason}, closing MFC1")
+        self.request_stop(reason)
+        if self.safety_callback:
+            self.safety_callback('mfc2_low', flow)
+        return True
     def set_safety_callback(self, callback):
         """设置安全回调函数"""
         self.safety_callback = callback
 
     def get_flow(self, address):
-        """获取当前流量值"""
+        """获取当前Flow value"""
         return self.flow_values.get(address, 0.0)
 
     def set_safety_enabled(self, enabled):
-        """启用/禁用安全保护"""
+        """on/off安全保护"""
         self.safety_enabled = enabled
-        print(f"安全保护: {'启用' if enabled else '禁用'}")
+        print(f"Safety: {'on' if enabled else 'off'}")
 
     def set_mfc2_threshold(self, threshold):
         """设置MFC2安全阈值"""
         self.mfc2_threshold = threshold
-        print(f"MFC2安全阈值设置为: {threshold} slm")
+        print(f"MFC2 threshold set to: {threshold} slm")
 
 
 # ==================== 命令行接口 ====================
@@ -319,21 +340,21 @@ def recommend_mfc_port(ports):
 
 
 def list_ports():
-    """列出可用串口"""
+    """List serial ports"""
     ports = serial.tools.list_ports.comports()
     if not ports:
-        print("未找到可用串口")
+        print("No serial ports found")
         return []
 
-    print("可用串口:")
+    print("Serial ports:")
     for i, port in enumerate(ports):
         print(f"  {i+1}. {port.device} - {port.description}")
 
     recommended = recommend_mfc_port(ports)
     if recommended:
-        print(f"推荐端口: {recommended.device} - {recommended.description}")
+        print(f"Recommended port: {recommended.device} - {recommended.description}")
     else:
-        print("推荐端口: 无法根据串口名称判断，请人工确认")
+        print("Recommended port: none; check manually")
 
     return ports
 
@@ -346,7 +367,7 @@ def cmd_connect(args, controller):
 
     port = args.port
     if not port:
-        print("错误：请指定串口 (--port COMx)")
+        print("ERROR Specify serial port (--port COMx)")
         return
 
     baudrate = args.baudrate or 9600
@@ -356,22 +377,22 @@ def cmd_connect(args, controller):
         # 初始化数字模式
         controller.init_mfc_mode()
 
-        # 设置地址
+        # 设置addr
         if args.addr1 and args.addr2:
             controller.set_addresses(args.addr1, args.addr2)
-            print(f"MFC地址设置: MFC1={args.addr1}, MFC2={args.addr2}")
+            print(f"MFC addresses: MFC1={args.addr1}, MFC2={args.addr2}")
 
 
 def cmd_set(args, controller):
-    """设置流量命令"""
+    """Set flow命令"""
     if not controller.connected:
-        print("错误：设备未连接")
+        print("ERROR Device not connected")
         return
 
     channel = args.channel
     flow = args.flow
 
-    # 确定地址
+    # 确定addr
     if channel == 1:
         address = controller.addresses[0]
     elif channel == 2:
@@ -382,20 +403,20 @@ def cmd_set(args, controller):
     unit = 'sccm' if address == controller.addresses[0] else 'slm'
 
     if controller.set_flow(address, flow):
-        print(f"OK MFC{channel} (地址{address}) 流量设置为: {flow} {unit}")
+        print(f"OK MFC{channel} (addr{address}) flow set to: {flow} {unit}")
     else:
-        print(f"FAIL 设置失败")
+        print(f"FAIL Set failed")
 
 
 def cmd_read(args, controller):
-    """读取流量命令"""
+    """Read flow命令"""
     if not controller.connected:
-        print("错误：设备未连接")
+        print("ERROR Device not connected")
         return
 
     channel = args.channel
 
-    # 确定地址
+    # 确定addr
     if channel == 1:
         address = controller.addresses[0]
     elif channel == 2:
@@ -406,15 +427,15 @@ def cmd_read(args, controller):
     flow = controller.read_flow(address)
     if flow is not None:
         unit = 'sccm' if address == controller.addresses[0] else 'slm'
-        print(f"MFC{channel} (地址{address}): {flow:.3f} {unit}")
+        print(f"MFC{channel} (addr{address}): {flow:.3f} {unit}")
     else:
-        print(f"FAIL 读取失败")
+        print(f"FAIL Read failed")
 
 
 def cmd_close(args, controller):
-    """关闭MFC命令"""
+    """Close MFC命令"""
     if not controller.connected:
-        print("错误：设备未连接")
+        print("ERROR Device not connected")
         return
 
     channel = args.channel
@@ -423,7 +444,7 @@ def cmd_close(args, controller):
         # 关闭所有
         for addr in controller.addresses:
             controller.set_flow(addr, 0)
-        print("OK 所有MFC已关闭")
+        print("OK All MFCs closed")
     else:
         # 关闭指定
         if channel == 1:
@@ -434,7 +455,7 @@ def cmd_close(args, controller):
             address = channel
 
         controller.set_flow(address, 0)
-        print(f"OK MFC{channel} (地址{address}) 已关闭")
+        print(f"OK MFC{channel} (addr{address}) closed")
 
 
 def cmd_disconnect(args, controller):
@@ -445,13 +466,13 @@ def cmd_disconnect(args, controller):
 def safety_trigger_callback(event_type, value):
     """安全事件回调"""
     if event_type == 'mfc2_low':
-        print(f"[安全] MFC2流量异常: {value:.3f} slm，MFC1已自动关闭")
+        print(f"[Safety] MFC2 flow abnormal: {value:.3f} slm，MFC1 auto-closed")
 
 
 def cmd_run_sequence(args, controller):
-    """执行实验流程命令"""
+    """Run sequence命令"""
     if not controller.connected:
-        print("错误：设备未连接，请先执行 connect 命令")
+        print("ERROR Device not connected. Run connect first.")
         return
 
     # 设置安全回调
@@ -465,26 +486,26 @@ def cmd_run_sequence(args, controller):
     pre_mfc2_time = args.pre_mfc2_time or 30
 
     print("=" * 50)
-    print("实验流程参数:")
-    print(f"  MFC2 (载气) 流量: {mfc2_flow} slm")
-    print(f"  MFC1 (氢气) 流量: {mfc1_flow} sccm")
-    print(f"  每次通氢气时间: {mfc1_duration} 秒")
-    print(f"  循环次数: {loop_count}")
-    print(f"  循环间隔: {loop_interval} 秒")
-    print(f"  首次MFC2预等待: {pre_mfc2_time} 秒")
+    print("Sequence params:")
+    print(f"  MFC2 carrier flow: {mfc2_flow} slm")
+    print(f"  MFC1 H2 flow: {mfc1_flow} sccm")
+    print(f"  H2 duration: {mfc1_duration} s")
+    print(f"  Loops: {loop_count}")
+    print(f"  Loop interval: {loop_interval} s")
+    print(f"  MFC2 pre-wait: {pre_mfc2_time} s")
     print("=" * 50)
 
     # 设置安全阈值
     controller.set_mfc2_threshold(0.1)
 
     try:
-        # 1. 打开MFC2，等待稳定
-        print(f"\n[步骤1] 打开MFC2到 {mfc2_flow} slm，等待 {pre_mfc2_time} 秒...")
+        # 1. 打开MFC2，wait稳定
+        print(f"\n[Step 1] Set MFC2 to {mfc2_flow} slm, wait {pre_mfc2_time} s...")
         if not controller.set_flow(controller.addresses[1], mfc2_flow):
-            print("FAIL 设置MFC2失败")
+            print("FAIL Set MFC2 failed")
             return
 
-        # 等待MFC2稳定
+        # waitMFC2稳定
         for i in range(pre_mfc2_time):
             flow = controller.get_flow(controller.addresses[1])
             print(f"\r  MFC2: {flow:.3f} slm ({i+1}/{pre_mfc2_time}s)", end='', flush=True)
@@ -493,16 +514,16 @@ def cmd_run_sequence(args, controller):
 
         # 2. 循环执行
         for cycle in range(1, loop_count + 1):
-            print(f"\n[循环 {cycle}/{loop_count}]")
+            print(f"\n[Cycle {cycle}/{loop_count}]")
 
-            # a. 打开MFC1（通氢气）
-            print(f"  → 打开MFC1到 {mfc1_flow} sccm...")
+            # a. 打开MFC1（H2 on）
+            print(f"  -> Set MFC1 to {mfc1_flow} sccm...")
             if not controller.set_flow(controller.addresses[0], mfc1_flow):
-                print("  FAIL 设置MFC1失败")
+                print("  FAIL Set MFC1 failed")
                 break
 
-            # b. 等待指定时间
-            print(f"  → 通氢气 {mfc1_duration} 秒...")
+            # b. wait指定时间
+            print(f"  -> H2 on {mfc1_duration} s...")
             for i in range(mfc1_duration):
                 flow1 = controller.get_flow(controller.addresses[0])
                 flow2 = controller.get_flow(controller.addresses[1])
@@ -511,42 +532,42 @@ def cmd_run_sequence(args, controller):
                 time.sleep(1)
             print()
 
-            # c. 关闭MFC1
-            print(f"  → 关闭MFC1...")
+            # c. Close MFC1
+            print(f"  -> Close MFC1...")
             controller.set_flow(controller.addresses[0], 0)
 
-            # d. 等待间隔时间（如果是最后一次循环，可以缩短等待）
+            # d. wait间隔时间（如果是最后一次循环，可以缩短wait）
             if cycle < loop_count:
                 wait_time = loop_interval
-                print(f"  → 等待 {wait_time} 秒...")
+                print(f"  -> wait {wait_time} s...")
                 for i in range(wait_time):
                     flow2 = controller.get_flow(controller.addresses[1])
-                    print(f"\r    恢复中... MFC2: {flow2:.3f} slm ({i+1}/{wait_time}s)",
+                    print(f"\r    Recovering... MFC2: {flow2:.3f} slm ({i+1}/{wait_time}s)",
                           end='', flush=True)
                     time.sleep(1)
                 print()
 
-        # 3. 循环结束，关闭所有MFC
-        print(f"\n[步骤3] 实验完成，关闭所有MFC...")
+        # 3. 循环结束，Close all MFCs
+        print(f"\n[Step 3] Experiment done, closing MFCs...")
         controller.set_flow(controller.addresses[0], 0)
         time.sleep(0.5)
         controller.set_flow(controller.addresses[1], 0)
 
-        print("\nOK 实验流程执行完成!")
+        print("\nOK Sequence done")
 
     except KeyboardInterrupt:
-        print("\n\nWARN 用户中断，关闭所有MFC...")
+        print("\n\nWARN Interrupted, closing MFCs...")
         controller.set_flow(controller.addresses[0], 0)
         controller.set_flow(controller.addresses[1], 0)
-        print("已安全关闭")
+        print("Closed safely")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='MFC质量流量控制器命令行工具',
+        description='MFC CLI',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例:
+Examples:
   %(prog)s connect --port COM3
   %(prog)s set --channel 1 --flow 40
   %(prog)s run-sequence --mfc2-flow 1.0 --mfc1-flow 30 --mfc1-duration 40 --loop-count 10
@@ -554,41 +575,41 @@ def main():
         """
     )
 
-    subparsers = parser.add_subparsers(dest='command', help='可用命令')
+    subparsers = parser.add_subparsers(dest='command', help='commands')
 
     # connect命令
-    connect_parser = subparsers.add_parser('connect', help='连接设备')
-    connect_parser.add_argument('--port', help='串口 (如 COM3)')
-    connect_parser.add_argument('--baudrate', type=int, help='波特率 (默认9600)')
-    connect_parser.add_argument('--list', action='store_true', help='列出可用串口')
-    connect_parser.add_argument('--addr1', type=int, default=1, help='MFC1地址 (默认1)')
-    connect_parser.add_argument('--addr2', type=int, default=2, help='MFC2地址 (默认2)')
+    connect_parser = subparsers.add_parser('connect', help='Connect device')
+    connect_parser.add_argument('--port', help='Serial port, e.g. COM3')
+    connect_parser.add_argument('--baudrate', type=int, help='Baud rate (default: 9600)')
+    connect_parser.add_argument('--list', action='store_true', help='List serial ports')
+    connect_parser.add_argument('--addr1', type=int, default=1, help='MFC1 address (default: 1)')
+    connect_parser.add_argument('--addr2', type=int, default=2, help='MFC2 address (default: 2)')
 
     # set命令
-    set_parser = subparsers.add_parser('set', help='设置流量')
-    set_parser.add_argument('--channel', type=int, required=True, help='MFC通道 (1或2)')
-    set_parser.add_argument('--flow', type=float, required=True, help='流量值')
+    set_parser = subparsers.add_parser('set', help='Set flow')
+    set_parser.add_argument('--channel', type=int, required=True, help='MFC channel (1 or 2)')
+    set_parser.add_argument('--flow', type=float, required=True, help='Flow value')
 
     # read命令
-    read_parser = subparsers.add_parser('read', help='读取流量')
-    read_parser.add_argument('--channel', type=int, required=True, help='MFC通道 (1或2)')
+    read_parser = subparsers.add_parser('read', help='Read flow')
+    read_parser.add_argument('--channel', type=int, required=True, help='MFC channel (1 or 2)')
 
     # close命令
-    close_parser = subparsers.add_parser('close', help='关闭MFC')
-    close_parser.add_argument('--channel', type=int, help='MFC通道 (不指定则关闭所有)')
-    close_parser.add_argument('--all', action='store_true', help='关闭所有MFC')
+    close_parser = subparsers.add_parser('close', help='Close MFC')
+    close_parser.add_argument('--channel', type=int, help='MFC channel (omit to close all)')
+    close_parser.add_argument('--all', action='store_true', help='Close all MFCs')
 
     # run-sequence命令
-    seq_parser = subparsers.add_parser('run-sequence', help='执行实验流程')
-    seq_parser.add_argument('--mfc2-flow', type=float, required=True, help='MFC2载气流量 (slm)')
-    seq_parser.add_argument('--mfc1-flow', type=float, required=True, help='MFC1氢气流量 (sccm)')
-    seq_parser.add_argument('--mfc1-duration', type=int, required=True, help='每次通氢气时间 (秒)')
-    seq_parser.add_argument('--loop-count', type=int, required=True, help='循环次数')
-    seq_parser.add_argument('--loop-interval', type=int, default=60, help='循环间隔时间 (秒, 默认60)')
-    seq_parser.add_argument('--pre-mfc2-time', type=int, help='首次MFC2预等待时间 (秒, 默认30)')
+    seq_parser = subparsers.add_parser('run-sequence', help='Run sequence')
+    seq_parser.add_argument('--mfc2-flow', type=float, required=True, help='MFC2 carrier flow (slm)')
+    seq_parser.add_argument('--mfc1-flow', type=float, required=True, help='MFC1 H2 flow (sccm)')
+    seq_parser.add_argument('--mfc1-duration', type=int, required=True, help='H2 duration (s)')
+    seq_parser.add_argument('--loop-count', type=int, required=True, help='Loop count')
+    seq_parser.add_argument('--loop-interval', type=int, default=60, help='Loop interval (s, default: 60)')
+    seq_parser.add_argument('--pre-mfc2-time', type=int, help='Initial MFC2 pre-wait (s, default: 30)')
 
     # disconnect命令
-    subparsers.add_parser('disconnect', help='断开连接')
+    subparsers.add_parser('disconnect', help='Disconnect')
 
     args = parser.parse_args()
 
@@ -601,7 +622,7 @@ def main():
 
     # 处理信号
     def signal_handler(sig, frame):
-        print("\n接收到中断信号，正在清理...")
+        print("\nInterrupt received, cleaning up...")
         controller.disconnect()
         sys.exit(0)
 

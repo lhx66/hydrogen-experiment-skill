@@ -31,6 +31,9 @@ class SkillDocumentationTests(unittest.TestCase):
             "传感器名称",
             "循环次数",
             "氢气浓度",
+            "常规一组实验默认是：打开记录、通入氢气一定时间、关闭 MFC1、结束记录或进入恢复段",
+            "常规实验优先只询问氢气浓度和通氢时间",
+            "只有用户要求多段通氢或等待时，才展开询问参数化通氢流程",
             "参数化通氢流程",
             "`h2:<浓度%>:<秒>`",
             "`wait:<秒>`",
@@ -96,6 +99,7 @@ class SkillDocumentationTests(unittest.TestCase):
         required_phrases = [
             "cli_tools/experiment_cli.py",
             "python cli_tools/experiment_cli.py run",
+            "python cli_tools/experiment_cli.py stop",
             "--dry-run",
             "--instrument fbg",
             "--loop-count 3",
@@ -120,11 +124,12 @@ class SkillDocumentationTests(unittest.TestCase):
 
         required_bold_phrases = [
             "**优先使用总程序**",
-            "**必须先确认实验结果保存文件夹、传感器名称、MFC串口、测量仪器、循环次数和参数化通氢流程**",
+            "**必须先确认实验结果保存文件夹、传感器名称、MFC串口、测量仪器、循环次数和常规实验流程**",
             "**FBG 解调仪固定为 192.168.1.1:1000**",
             "**功率计固定为 TCPIP0::192.169.1.102::inst0::INSTR**",
             "**超过4.0% 的氢气浓度必须先获得明确授权**",
             "**总程序只负责实验硬件编排和 CSV 产出，不内嵌分析或绘图**",
+            "**用户在任何时候要求“关闭氢气”或“结束实验流程”时，agent 必须立即请求停止实验并把 MFC1 设为 0**",
             "**每组实验完成后，agent 默认调用分析脚本读取对应 CSV，并按固定格式输出分析信息**",
             "**所有循环结束后，agent 默认调用绘图脚本保存一张汇总响应曲线图到实验文件夹中，并只把文件路径发送到 agent 窗口**",
         ]
@@ -160,6 +165,7 @@ class SkillDocumentationTests(unittest.TestCase):
         required_phrases = [
             "cli_tools/experiment_cli.py",
             "python cli_tools/experiment_cli.py run",
+            "python cli_tools/experiment_cli.py stop",
             "analysis/analyze_sensor_response.py",
             "python analysis/analyze_sensor_response.py analyze",
             "analysis/plot_sensor_response.py",

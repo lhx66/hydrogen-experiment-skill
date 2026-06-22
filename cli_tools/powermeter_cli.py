@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-功率计命令行工具 - 简化版
+Powermeter CLI - 简化版
 基于原有GUI版本优化，支持四通道功率采集
 """
 
@@ -16,8 +16,8 @@ import signal
 try:
     import pyvisa as visa
 except ImportError:
-    print("错误: 需要安装 pyvisa 库")
-    print("请运行: pip install pyvisa pyvisa-py")
+    print("ERROR pyvisa is required")
+    print("Run: pip install pyvisa pyvisa-py")
     sys.exit(1)
 
 
@@ -31,7 +31,7 @@ def output_csv_filename(base):
 
 
 def parse_vals_from_string(s):
-    """从字符串解析浮点数值"""
+    """从字符串解析浮数值"""
     if s is None:
         return []
     ss = str(s).strip().replace('"', '').replace('|', ',')
@@ -70,14 +70,14 @@ class PowerInstrument:
                 self.rm = visa.ResourceManager()
                 self.backend_used = 'default'
         except Exception as e:
-            raise RuntimeError(f"无法初始化VISA: {e}")
+            raise RuntimeError(f"VISA init failed: {e}")
 
     def open(self, resource_str=None):
         """打开设备"""
         if resource_str:
             self.resource_str = resource_str
         if not self.resource_str:
-            raise ValueError("未提供资源字符串")
+            raise ValueError("Missing resource string")
 
         try:
             self.inst = self.rm.open_resource(self.resource_str, timeout=self.timeout_ms)
@@ -85,10 +85,10 @@ class PowerInstrument:
             self.inst.write_termination = '\n'
 
             idn = self.inst.query("*IDN?")
-            print(f"OK 设备ID: {idn.strip()}")
+            print(f"OK Device ID: {idn.strip()}")
             return idn.strip()
         except Exception as e:
-            raise RuntimeError(f"无法打开设备: {e}")
+            raise RuntimeError(f"Open device failed: {e}")
 
     def close(self):
         """关闭设备"""
@@ -157,9 +157,9 @@ class DataLogger(Thread):
             self.csv_file = open(self.filename, 'w', newline='', encoding='utf-8-sig')
             self.csv_writer = csv.writer(self.csv_file)
             self.csv_writer.writerow(['elapsed_s', 'slot1_W', 'slot2_W', 'slot3_W', 'slot4_W'])
-            print(f"OK 数据保存到: {self.filename}")
+            print(f"OK Saving to: {self.filename}")
         except Exception as e:
-            print(f"FAIL 创建文件失败: {e}")
+            print(f"FAIL Create file failed: {e}")
             return
 
         try:
@@ -177,7 +177,7 @@ class DataLogger(Thread):
                 try:
                     v1, v2, v3, v4, note = self.instrument.read_four_slots()
                 except Exception as e:
-                    print(f"\n读取错误: {e}")
+                    print(f"\nRead error: {e}")
                     v1, v2, v3, v4 = None, None, None, None
 
                 # 写入CSV
@@ -201,11 +201,11 @@ class DataLogger(Thread):
                     if self.status_callback:
                         if self.duration > 0:
                             remaining = self.duration - elapsed
-                            self.status_callback(f"已记录 {self.data_count} 点, 剩余 {int(remaining)} 秒 | S1: {v1:.3e}" if v1 else f"已记录 {self.data_count} 点")
+                            self.status_callback(f"Points: {self.data_count} , remaining {int(remaining)} s | S1: {v1:.3e}" if v1 else f"Points: {self.data_count} ")
                         else:
-                            self.status_callback(f"已记录 {self.data_count} 点 | S1: {v1:.3e}" if v1 else f"已记录 {self.data_count} 点")
+                            self.status_callback(f"Points: {self.data_count}  | S1: {v1:.3e}" if v1 else f"Points: {self.data_count} ")
 
-                # 等待间隔
+                # 等待interval
                 dt = time.time() - t0
                 to_sleep = self.interval - dt
                 if to_sleep > 0:
@@ -217,7 +217,7 @@ class DataLogger(Thread):
                     self.csv_file.flush()
                     os.fsync(self.csv_file.fileno())
                     self.csv_file.close()
-                    print(f"\nOK 数据已保存: {self.filename} ({self.data_count} 个数据点)")
+                    print(f"\nOK Saved: {self.filename} ({self.data_count} points)")
                 except:
                     pass
 
@@ -234,7 +234,7 @@ def cmd_start(args):
     filename = args.filename or 'power_log'
 
     if not resource:
-        print("错误：请指定VISA资源字符串 (--resource)")
+        print("ERROR Specify VISA resource (--resource)")
         return
 
     # 生成文件名。实验文件夹通常已带日期，文件名保留实验条件信息即可。
@@ -242,11 +242,11 @@ def cmd_start(args):
 
     # 打开设备
     try:
-        print(f"正在连接设备: {resource}")
+        print(f"Connecting device: {resource}")
         instrument = PowerInstrument(resource_str=resource, timeout_ms=5000)
         instrument.open()
     except Exception as e:
-        print(f"FAIL 连接失败: {e}")
+        print(f"FAIL Connect failed: {e}")
         return
 
     # 状态显示
@@ -256,8 +256,8 @@ def cmd_start(args):
     # 创建记录线程
     logger = DataLogger(instrument, duration, interval, csv_filename, status_callback)
 
-    mode_str = "无限模式" if duration < 0 else f"{duration}秒模式"
-    print(f"开始采集: {mode_str}, 间隔={interval}秒")
+    mode_str = "unlimited" if duration < 0 else f"{duration}smode"
+    print(f"Acquisition started: {mode_str}, interval={interval}s")
 
     logger.start()
 
@@ -265,18 +265,18 @@ def cmd_start(args):
         logger.join()
 
     except KeyboardInterrupt:
-        print("\n\nWARN 用户中断")
+        print("\n\nWARN Interrupted")
         logger.stop()
-        print("正在停止采集...")
+        print("Stopping acquisition...")
 
     finally:
         instrument.close()
 
 
 def cmd_list(args):
-    """列出可用设备"""
+    """List devices"""
     try:
-        print("正在搜索设备...")
+        print("Scanning devices...")
         try:
             rm = visa.ResourceManager('@py')
         except:
@@ -285,39 +285,39 @@ def cmd_list(args):
         resources = rm.list_resources()
 
         if not resources:
-            print("未找到设备")
+            print("No devices found")
         else:
-            print(f"找到 {len(resources)} 个设备:")
+            print(f"Found {len(resources)} devices:")
             for i, res in enumerate(resources):
                 print(f"  {i+1}. {res}")
 
         rm.close()
     except Exception as e:
-        print(f"搜索失败: {e}")
+        print(f"Scan failed: {e}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='功率计命令行工具',
+        description='Powermeter CLI',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例:
+Examples:
   %(prog)s list
   %(prog)s start --duration 600 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-600s_powermeter_cycle01
         """
     )
 
-    subparsers = parser.add_subparsers(dest='command', help='可用命令')
+    subparsers = parser.add_subparsers(dest='command', help='commands')
 
     # list命令
-    subparsers.add_parser('list', help='列出可用设备')
+    subparsers.add_parser('list', help='List devices')
 
     # start命令
-    start_parser = subparsers.add_parser('start', help='开始采集')
-    start_parser.add_argument('--resource', default=DEFAULT_POWERMETER_RESOURCE, help='VISA资源字符串')
-    start_parser.add_argument('--duration', type=float, default=-1, help='采集时长 (秒, -1表示无限)')
-    start_parser.add_argument('--interval', type=float, default=0.1, help='采样间隔 (秒, 默认0.1)')
-    start_parser.add_argument('--filename', help='保存文件名 (不含扩展名)')
+    start_parser = subparsers.add_parser('start', help='Acquisition started')
+    start_parser.add_argument('--resource', default=DEFAULT_POWERMETER_RESOURCE, help='VISA resource string')
+    start_parser.add_argument('--duration', type=float, default=-1, help='Acquisition duration (s, -1 = unlimited)')
+    start_parser.add_argument('--interval', type=float, default=0.1, help='Sample interval (s, default: 0.1)')
+    start_parser.add_argument('--filename', help='Output filename without extension')
 
     args = parser.parse_args()
 
@@ -327,7 +327,7 @@ def main():
 
     # 信号处理
     def signal_handler(sig, frame):
-        print("\n接收到中断信号，正在退出...")
+        print("\nInterrupt received, exiting...")
         sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)

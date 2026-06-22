@@ -208,6 +208,29 @@ class ExperimentCliTests(unittest.TestCase):
         self.assertTrue(kwargs["high_concentration_authorized"])
         self.assertTrue(kwargs["save_artifacts"])
 
+
+    def test_stop_command_writes_stop_request_for_last_output_folder(self):
+        output_dir = ROOT / "tmp_test_output" / "stop_command"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        stop_file = output_dir / ".hydrogen_experiment_stop.json"
+        if stop_file.exists():
+            stop_file.unlink()
+        self.experiment_cli.save_last_output_folder(str(output_dir))
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = self.experiment_cli.main([
+                "stop",
+                "--reason",
+                "User requested stop",
+            ])
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "stop_requested")
+        self.assertEqual(payload["stop_file"], str(stop_file))
+        stop_request = json.loads(stop_file.read_text(encoding="utf-8"))
+        self.assertEqual(stop_request["reason"], "User requested stop")
     def test_run_rejects_natural_language_positional_request(self):
         stderr = io.StringIO()
         with self.assertRaises(SystemExit):

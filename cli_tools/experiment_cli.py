@@ -23,6 +23,7 @@ from hydrogen_experiment import (  # noqa: E402
     DEFAULT_FBG_PORT,
     DEFAULT_MFC2_FLOW_SLM,
     DEFAULT_POWERMETER_RESOURCE,
+    STOP_REQUEST_FILENAME,
     HIGH_CONCENTRATION_AUTH_LIMIT_PERCENT,
     calculate_flow_sequence_duration,
     max_flow_sequence_concentration,
@@ -73,6 +74,30 @@ def resolve_output_folder(output_folder: Optional[str]) -> str:
         return last_output_folder
 
     raise ValueError("First run must specify --output-folder; later runs can reuse the last folder.")
+
+
+def write_stop_request(output_folder: str, reason: str) -> Path:
+    output_path = Path(output_folder)
+    output_path.mkdir(parents=True, exist_ok=True)
+    stop_file = output_path / STOP_REQUEST_FILENAME
+    stop_file.write_text(
+        json.dumps({"reason": reason}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return stop_file
+
+
+def close_hydrogen_once(mfc_port: str) -> Dict:
+    from mfc_cli import MFCController
+
+    controller = MFCController()
+    if not controller.connect(mfc_port, baudrate=9600):
+        return {"ok": False, "error": "MFC connect failed"}
+    try:
+        ok = controller.set_flow(controller.addresses[0], 0)
+        return {"ok": bool(ok)}
+    finally:
+        controller.disconnect()
 
 
 def _parse_positive_int(value: str, field_name: str) -> int:
@@ -263,12 +288,34 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--authorize-high-concentration", action="store_true")
     run_parser.add_argument("--save-artifacts", action="store_true")
     run_parser.add_argument("--dry-run", action="store_true", help="Print the plan without touching hardware")
+    stop_parser = subparsers.add_parser("stop", help="Request a running experiment to stop")
+    stop_parser.add_argument("--output-folder", help="Experiment output folder; omitted runs reuse the last folder")
+    stop_parser.add_argument("--reason", default="User requested stop", help="Stop reason")
+    stop_parser.add_argument("--mfc-port", help="Optional COM port to close MFC1 immediately")
+
     return parser
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "stop":
+        try:
+            output_folder = resolve_output_folder(args.output_folder)
+            stop_file = write_stop_request(output_folder, args.reason)
+            payload = {
+                "status": "stop_requested",
+                "stop_file": str(stop_file),
+                "reason": args.reason,
+            }
+            if args.mfc_port:
+                payload["close_hydrogen"] = close_hydrogen_once(args.mfc_port)
+            _json_print(payload)
+            return 0
+        except ValueError as e:
+            parser.error(str(e))
+            return 2
 
     if args.command != "run":
         parser.print_help()

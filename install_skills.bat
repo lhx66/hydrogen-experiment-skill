@@ -29,8 +29,8 @@ if defined HYDROGEN_EXPERIMENT_INSTALL_DIR (
 
 echo.
 echo ======================================
-echo  光纤氢气传感器实验自动化 Skill
-echo  Windows 安装程序
+echo  Hydrogen Experiment Skill
+echo  Windows Installer
 echo  Version %INSTALLER_VERSION%
 echo ======================================
 echo.
@@ -38,7 +38,7 @@ echo.
 REM ========================================
 REM 1. 检测 Python
 REM ========================================
-echo [1/6] 检测 Python 环境...
+echo [1/6] Checking Python...
 
 set "PYTHON_CMD="
 for %%P in (python python3 python38 python39 python310 python311) do (
@@ -46,18 +46,18 @@ for %%P in (python python3 python38 python39 python310 python311) do (
     if not errorlevel 1 (
         set "PYTHON_CMD=%%P"
         for /f "tokens=2" %%V in ('%%P --version 2^>^&1') do (
-            echo [OK]    找到 Python %%V ^(%%P^)
+            echo [OK]    Found Python %%V ^(%%P^)
         )
         goto :python_found
     )
 )
 
-echo [WARN]  未找到 Python %MIN_PYTHON_VERSION%+
+echo [WARN]  Python %MIN_PYTHON_VERSION%+ not found
 echo.
-echo 请先安装 Python 3.8 或更高版本:
+echo Please install Python 3.8 or newer:
 echo   https://www.python.org/downloads/
 echo.
-echo 安装时请勾选 "Add Python to PATH"
+echo Enable "Add Python to PATH" during install
 call :maybe_pause
 exit /b 1
 
@@ -67,43 +67,43 @@ REM ========================================
 REM 2. 准备项目文件
 REM ========================================
 echo.
-echo [2/6] 准备项目文件...
+echo [2/6] Preparing project files...
 call :cleanup_old_skill
 
 if exist "%LAUNCH_DIR%\skills\%SKILL_DIR_NAME%\SKILL.md" (
     set "PROJECT_DIR=%LAUNCH_DIR%"
-    echo [OK]    本地安装模式: %LAUNCH_DIR%
+    echo [OK]    Local install: %LAUNCH_DIR%
 ) else (
     set "PROJECT_DIR=%CANONICAL_DIR%"
     git --version >nul 2>&1
     if errorlevel 1 (
-        echo [ERROR] 未检测到 Git。请先安装 Git for Windows: https://git-scm.com/download/win
+        echo [ERROR] Git not found. Install Git for Windows: https://git-scm.com/download/win
         call :maybe_pause
         exit /b 1
     )
 
     if exist "%CANONICAL_DIR%\.git" (
-        echo [INFO]  正在从远程同步最新代码...
+        echo [INFO]  Syncing latest code...
         pushd "%CANONICAL_DIR%"
         git remote set-url origin "%REPO_URL%"
         git fetch origin main
         if errorlevel 1 (
             popd
-            echo [ERROR] 远程同步失败
+            echo [ERROR] Remote sync failed
             call :maybe_pause
             exit /b 1
         )
         git reset --hard origin/main
         if errorlevel 1 (
             popd
-            echo [ERROR] 仓库更新失败
+            echo [ERROR] Repository update failed
             call :maybe_pause
             exit /b 1
         )
         git clean -fdx
         if errorlevel 1 (
             popd
-            echo [ERROR] 仓库清理失败
+            echo [ERROR] Repository cleanup failed
             call :maybe_pause
             exit /b 1
         )
@@ -117,18 +117,18 @@ if exist "%LAUNCH_DIR%\skills\%SKILL_DIR_NAME%\SKILL.md" (
             ) else if exist "%CANONICAL_DIR%\install_skills.bat" (
                 rmdir /s /q "%CANONICAL_DIR%"
             ) else (
-                echo [ERROR] 安装目录已存在但不是 Git 仓库: %CANONICAL_DIR%
-                echo         请删除该目录，或设置 HYDROGEN_EXPERIMENT_INSTALL_DIR 指向新的安装目录。
+                echo [ERROR] Install directory exists and is not a Git repo: %CANONICAL_DIR%
+                echo         Delete it, or set HYDROGEN_EXPERIMENT_INSTALL_DIR to a new path.
                 call :maybe_pause
                 exit /b 1
             )
         )
         for %%D in ("%CANONICAL_DIR%\..") do set "CANONICAL_PARENT=%%~fD"
         if not exist "!CANONICAL_PARENT!" mkdir "!CANONICAL_PARENT!"
-        echo [INFO]  正在克隆远程仓库: %CANONICAL_DIR%
+        echo [INFO]  Cloning repository: %CANONICAL_DIR%
         git clone "%REPO_URL%" "%CANONICAL_DIR%"
         if errorlevel 1 (
-            echo [ERROR] 远程仓库克隆失败
+            echo [ERROR] Repository clone failed
             call :maybe_pause
             exit /b 1
         )
@@ -143,38 +143,38 @@ REM ========================================
 REM 3. 检查 Skill 文件
 REM ========================================
 echo.
-echo [3/6] 检查 Skill 文件...
+echo [3/6] Checking skill files...
 
 if not exist "%SKILLS_DIR%\SKILL.md" (
-    echo [ERROR] 未找到 Skill 文件: %SKILLS_DIR%\SKILL.md
+    echo [ERROR] Skill file not found: %SKILLS_DIR%\SKILL.md
     call :maybe_pause
     exit /b 1
 )
-echo [OK]    Skill 核心文件准备完成
+echo [OK]    Skill files ready
 
 REM ========================================
 REM 4. 安装 Python 依赖
 REM ========================================
 echo.
-echo [4/6] 安装 Python 依赖包...
-echo (这可能需要几分钟，请耐心等待...)
+echo [4/6] Installing Python dependencies...
+echo (This may take a few minutes...)
 
 if not exist "%REQUIREMENTS_FILE%" (
-    echo [WARN]  未找到 requirements.txt，跳过依赖安装
+    echo [WARN]  requirements.txt not found; skipping dependencies
     goto :skip_deps
 )
 
 REM 检查 pip；默认不强制升级，避免环境内 pip 自身问题阻塞安装
 %PYTHON_CMD% -m pip --version >nul 2>&1
 if errorlevel 1 (
-    echo [INFO]  未检测到 pip，尝试通过 ensurepip 安装
+    echo [INFO]  pip not found; trying ensurepip
     %PYTHON_CMD% -m ensurepip --upgrade
 )
 
 if /I "%HYDROGEN_EXPERIMENT_UPGRADE_PIP%"=="1" (
     %PYTHON_CMD% -m pip install --upgrade pip
     if errorlevel 1 (
-        echo [WARN]  pip 升级失败，将继续使用当前 pip 安装依赖
+        echo [WARN]  pip upgrade failed; using current pip
     )
 )
 
@@ -182,11 +182,11 @@ REM 安装依赖
 %PYTHON_CMD% -m pip install -r "%REQUIREMENTS_FILE%"
 
 if errorlevel 1 (
-    echo [ERROR] 依赖安装失败
+    echo [ERROR] Dependency install failed
     call :maybe_pause
     exit /b 1
 )
-echo [OK]    Python 依赖安装完成
+echo [OK]    Python dependencies installed
 
 :skip_deps
 
@@ -194,12 +194,12 @@ REM ========================================
 REM 5. 设置 CLI 工具并分发 Skill
 REM ========================================
 echo.
-echo [5/6] 设置 CLI 工具...
+echo [5/6] Setting up CLI tools...
 
 REM 创建环境设置脚本
 (
 echo @echo off
-echo REM CLI 工具环境设置
+echo REM CLI tool environment setup
 echo.
 echo set "PYTHONPATH=%%PYTHONPATH%%;%SCRIPT_DIR%%\cli_tools"
 echo set "PYTHONPATH=%%PYTHONPATH%%;%SCRIPT_DIR%%\analysis"
@@ -207,8 +207,8 @@ echo set "PYTHONPATH=%%PYTHONPATH%%;%SCRIPT_DIR%%\skills"
 echo set "PATH=%%PATH%%;%SCRIPT_DIR%%\cli_tools"
 ) > "%SCRIPT_DIR%\cli_tools\env_setup.bat"
 
-echo [OK]    CLI 工具环境设置完成
-echo         运行: cli_tools\env_setup.bat
+echo [OK]    CLI environment ready
+echo         Run: cli_tools\env_setup.bat
 
 if exist "%USERPROFILE%\.claude" call :copy_skill "%USERPROFILE%\.claude\skills\%SKILL_NAME%" "Claude Code"
 if exist "%USERPROFILE%\.codex" call :copy_skill "%USERPROFILE%\.codex\skills\%SKILL_NAME%" "Codex"
@@ -218,7 +218,7 @@ REM ========================================
 REM 6. 注册 Claude Code / Codex 斜杠命令
 REM ========================================
 echo.
-echo [6/6] 注册 Claude Code / Codex 斜杠命令...
+echo [6/6] Registering Claude Code / Codex slash commands...
 
 set "CLAUDE_DIR=%USERPROFILE%\.claude"
 set "COMMANDS_DIR=%CLAUDE_DIR%\commands"
@@ -229,24 +229,24 @@ if exist "%CLAUDE_DIR%" (
    REM 创建命令文件
     (
 echo ---
-echo description: 自动化执行光纤氢气传感器实验
+echo description: Run optical fiber hydrogen sensor experiments
 echo ---
 echo.
-echo 请先读取并严格遵循 `%SKILLS_DIR%\SKILL.md` 中的守则。
+echo Read and follow `%SKILLS_DIR%\SKILL.md` first.
 echo.
-echo 然后解析用户的实验请求（自然语言），并询问实验结果保存文件夹、传感器名称和 MFC 串口。
-echo 优先调用总程序，不要手动拼接底层 MFC/FBG/功率计命令。
+echo Parse the request and ask for output folder, sensor name, and MFC port.
+echo Prefer experiment_cli.py; avoid manual low-level command assembly.
 echo.
-echo 固定设备地址：
-echo - FBG 解调仪：192.168.1.1:1000
-echo - 功率计：TCPIP0::192.169.1.102::inst0::INSTR
+echo Fixed device addresses:
+echo - FBG demodulator: 192.168.1.1:1000
+echo - Powermeter: TCPIP0::192.169.1.102::inst0::INSTR
 echo.
-echo 支持的自然语言请求示例：
-echo - "进行十次4%%氢气测试，每次40秒，使用功率计测量"
-echo - "进行5次2%%氢气测试，每次30秒，使用FBG测量"
-echo - "做三次1%%氢气测试，每次20秒"
+echo Example requests:
+echo - "Run 10 cycles at 4%% H2, 40s each, using powermeter"
+echo - "Run 5 cycles at 2%% H2, 30s each, using FBG"
+echo - "Run 3 cycles at 1%% H2, 20s each"
 echo.
-echo 推荐先 dry-run：
+echo Recommended dry-run:
 echo ```batch
 echo cd /d "%PROJECT_DIR%"
 echo cli_tools\env_setup.bat
@@ -254,9 +254,9 @@ echo python cli_tools\experiment_cli.py run --output-folder "E:\experiments\2026
 echo ```
     ) > "%COMMANDS_DIR%\%COMMAND_NAME%.md"
 
-    echo [OK]    斜杠命令注册成功: /%COMMAND_NAME%
+    echo [OK]    Slash command registered: /%COMMAND_NAME%
 ) else (
-    echo [WARN]  未找到 Claude Code 目录，跳过命令注册
+    echo [WARN]  Claude Code directory not found; skipping command
 )
 
 set "CODEX_DIR=%USERPROFILE%\.codex"
@@ -267,24 +267,24 @@ if exist "%CODEX_DIR%" (
 
     (
 echo ---
-echo description: 自动化执行光纤氢气传感器实验
+echo description: Run optical fiber hydrogen sensor experiments
 echo ---
 echo.
-echo 请先读取并严格遵循 `%SKILLS_DIR%\SKILL.md` 中的守则。
+echo Read and follow `%SKILLS_DIR%\SKILL.md` first.
 echo.
-echo 然后使用 hydrogen-experiment skill 解析用户的实验请求（自然语言），并询问实验结果保存文件夹、传感器名称和 MFC 串口。
-echo 优先调用总程序，不要手动拼接底层 MFC/FBG/功率计命令。
+echo Use the hydrogen-experiment skill; ask for output folder, sensor name, and MFC port.
+echo Prefer experiment_cli.py; avoid manual low-level command assembly.
 echo.
-echo 固定设备地址：
-echo - FBG 解调仪：192.168.1.1:1000
-echo - 功率计：TCPIP0::192.169.1.102::inst0::INSTR
+echo Fixed device addresses:
+echo - FBG demodulator: 192.168.1.1:1000
+echo - Powermeter: TCPIP0::192.169.1.102::inst0::INSTR
 echo.
-echo 支持的自然语言请求示例：
-echo - "进行十次4%%氢气测试，每次40秒，使用功率计测量"
-echo - "进行5次2%%氢气测试，每次30秒，使用FBG测量"
-echo - "做三次1%%氢气测试，每次20秒"
+echo Example requests:
+echo - "Run 10 cycles at 4%% H2, 40s each, using powermeter"
+echo - "Run 5 cycles at 2%% H2, 30s each, using FBG"
+echo - "Run 3 cycles at 1%% H2, 20s each"
 echo.
-echo 推荐先 dry-run：
+echo Recommended dry-run:
 echo ```batch
 echo cd /d "%PROJECT_DIR%"
 echo cli_tools\env_setup.bat
@@ -292,9 +292,9 @@ echo python cli_tools\experiment_cli.py run --output-folder "E:\experiments\2026
 echo ```
     ) > "%CODEX_COMMANDS_DIR%\%COMMAND_NAME%.md"
 
-    echo [OK]    注册 Codex 斜杠命令成功: /%COMMAND_NAME%
+    echo [OK]    Codex slash command registered: /%COMMAND_NAME%
 ) else (
-    echo [WARN]  未找到 Codex 目录，跳过 Codex 命令注册
+    echo [WARN]  Codex directory not found; skipping command
 )
 
 REM ========================================
@@ -302,24 +302,24 @@ REM 安装完成
 REM ========================================
 echo.
 echo ======================================
-echo  安装完成！
+echo  Install complete
 echo ======================================
 echo.
-echo 使用方法：
-echo   1. 重启 Claude Code 或 Codex
-echo   2. 使用斜杠命令：
+echo Usage:
+echo   1. Restart Claude Code or Codex
+echo   2. Use slash command:
 echo.
-echo     /%COMMAND_NAME% 进行十次4%%氢气测试，每次40秒，使用功率计测量
+echo     /%COMMAND_NAME% Run 10 cycles at 4%% H2, 40s each, using powermeter
 echo.
-echo 环境设置：
-echo   首次使用前，设置 PYTHONPATH：
+echo Environment setup:
+echo   Before first use, set PYTHONPATH:
 echo.
 echo   cd /d "%SCRIPT_DIR%"
 echo   cli_tools\env_setup.bat
 echo.
-echo Skill 位置：%SKILLS_DIR%
+echo Skill path: %SKILLS_DIR%
 echo.
-echo 详细文档请查看: %SKILLS_DIR%\SKILL.md
+echo Docs: %SKILLS_DIR%\SKILL.md
 echo.
 call :maybe_pause
 exit /b 0
@@ -332,14 +332,14 @@ if not exist "%DEST_PARENT%" mkdir "%DEST_PARENT%"
 if exist "%DEST_DIR%" rmdir /s /q "%DEST_DIR%"
 xcopy "%SKILLS_DIR%\*" "%DEST_DIR%\" /E /I /Y >nul
 if errorlevel 1 (
-    echo [WARN]  分发至 %PLATFORM_NAME% 失败: %DEST_DIR%
+    echo [WARN]  Copy to %PLATFORM_NAME% failed: %DEST_DIR%
 ) else (
-    echo [OK]    已分发至 %PLATFORM_NAME%: %DEST_DIR%
+    echo [OK]    Copied to %PLATFORM_NAME%: %DEST_DIR%
 )
 exit /b 0
 
 :cleanup_old_skill
-echo [INFO]  清理旧版 Skill 和斜杠命令...
+echo [INFO]  Cleaning old skill and slash commands...
 call :remove_dir "%USERPROFILE%\.claude\skills\%SKILL_NAME%"
 call :remove_dir "%USERPROFILE%\.claude\skills\%SKILL_DIR_NAME%"
 call :remove_file "%USERPROFILE%\.claude\commands\%COMMAND_NAME%.md"

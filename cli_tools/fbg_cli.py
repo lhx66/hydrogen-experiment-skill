@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FBG解调仪命令行工具
+FBG demodulator CLI
 支持8通道100Hz波长数据采集
 """
 
@@ -35,7 +35,7 @@ class FBGDemodulator:
         self.error_count = 0
 
     def connect(self, ip, port=DEFAULT_FBG_PORT):
-        """连接设备"""
+        """Connect device"""
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(3)
@@ -43,14 +43,14 @@ class FBGDemodulator:
             self.socket.settimeout(1.0)
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
             self.connected = True
-            print(f"OK 已连接到 {ip}:{port}")
+            print(f"OK Connected: {ip}:{port}")
             return True
         except Exception as e:
-            print(f"FAIL 连接失败: {e}")
+            print(f"FAIL Connect failed: {e}")
             return False
 
     def disconnect(self, send_stop=True):
-        """断开连接"""
+        """Disconnect"""
         self.receiving = False
         if self.connected and self.socket:
             try:
@@ -71,7 +71,7 @@ class FBGDemodulator:
             self.socket.send(command)
             return True
         except Exception as e:
-            print(f"发送启动命令失败: {e}")
+            print(f"Start command failed: {e}")
             return False
 
     def send_stop_command(self):
@@ -83,7 +83,7 @@ class FBGDemodulator:
             self.socket.send(command)
             return True
         except Exception as e:
-            print(f"发送停止命令失败: {e}")
+            print(f"Stop command failed: {e}")
             return False
 
     def receive_data(self):
@@ -99,7 +99,7 @@ class FBGDemodulator:
 
             if not self.synced and len(self.recv_buffer) >= 20:
                 if self.error_count < 3:
-                    print(f"调试：接收到前20字节: {self.recv_buffer[:20].hex()}")
+                    print(f"Debug first 20 bytes: {self.recv_buffer[:20].hex()}")
 
             if not self.synced and len(self.recv_buffer) >= 100:
                 idx = self.recv_buffer.find(sync_pattern)
@@ -107,7 +107,7 @@ class FBGDemodulator:
                     self.recv_buffer = self.recv_buffer[idx:]
                     self.synced = True
                     if self.error_count < 3:
-                        print(f"调试：找到同步头，偏移{idx}字节")
+                        print(f"Debug sync offset {idx} bytes")
                 else:
                     discard = len(self.recv_buffer) // 2
                     self.recv_buffer = self.recv_buffer[discard:]
@@ -124,7 +124,7 @@ class FBGDemodulator:
                             return self.parse_wavelength_data(packet)
                         else:
                             if self.error_count < 3:
-                                print(f"警告：数据长度不匹配，期望960，实际{data_length}")
+                                print(f"WARN Data length mismatch, expected 960, got {data_length}")
                             self.error_count += 1
                             self.recv_buffer = self.recv_buffer[1:]
                             continue
@@ -136,11 +136,11 @@ class FBGDemodulator:
         except socket.timeout:
             return None
         except ConnectionError:
-            print("连接已断开")
+            print("Disconnected")
             self.connected = False
             return None
         except Exception as e:
-            print(f"接收数据失败: {e}")
+            print(f"Receive failed: {e}")
             self.error_count += 1
             return None
 
@@ -191,10 +191,10 @@ class DataLogger:
             self.csv_file = open(self.filename, 'w', newline='', encoding='utf-8-sig')
             self.csv_writer = csv.writer(self.csv_file)
             self.csv_writer.writerow(['Timestamp', 'Relative_Time(s)', 'Wavelength(nm)', 'Channel'])
-            print(f"OK 数据保存到: {self.filename}")
+            print(f"OK Saving to: {self.filename}")
             return True
         except Exception as e:
-            print(f"FAIL 创建文件失败: {e}")
+            print(f"FAIL Create file failed: {e}")
             return False
 
     def stop(self):
@@ -204,7 +204,7 @@ class DataLogger:
                 self.csv_file.flush()
                 os.fsync(self.csv_file.fileno())
                 self.csv_file.close()
-                print(f"\nOK 数据已保存: {self.filename} ({self.data_count} 个数据点)")
+                print(f"\nOK Saved: {self.filename} ({self.data_count} points)")
             except:
                 pass
             self.csv_file = None
@@ -273,7 +273,7 @@ class AcquisitionThread(threading.Thread):
         start_time = time.time()
         if not self.demodulator.send_start_command():
             if self.status_callback:
-                self.status_callback("启动采集命令发送失败")
+                self.status_callback("Start command failed")
             return
 
         while not self.stop_event.is_set():
@@ -295,9 +295,9 @@ class AcquisitionThread(threading.Thread):
                     elapsed = time.time() - start_time
                     if self.duration > 0:
                         remaining = self.duration - elapsed
-                        self.status_callback(f"已接收 {self.packet_count} 包, 剩余 {int(remaining)} 秒")
+                        self.status_callback(f"Packets: {self.packet_count} , remaining {int(remaining)} s")
                     else:
-                        self.status_callback(f"已接收 {self.packet_count} 包")
+                        self.status_callback(f"Packets: {self.packet_count} ")
 
     def stop(self):
         """停止采集"""
@@ -310,9 +310,9 @@ def cmd_connect(args, controller):
     port = args.port or DEFAULT_FBG_PORT
 
     if controller.connect(ip, port):
-        print("连接成功，可以使用 start 命令开始采集")
+        print("Connected. Use start to acquire.")
     else:
-        print("连接失败")
+        print("Connect failed")
 
 
 def cmd_start(args, controller):
@@ -321,7 +321,7 @@ def cmd_start(args, controller):
     if not controller.connected:
         ip = getattr(args, "ip", None) or DEFAULT_FBG_IP
         port = args.port or DEFAULT_FBG_PORT
-        print(f"正在连接FBG解调仪: {ip}:{port}")
+        print(f"Connecting FBG: {ip}:{port}")
         if not controller.connect(ip, port):
             return
         opened_here = True
@@ -351,10 +351,10 @@ def cmd_start(args, controller):
         status_callback
     )
 
-    print(f"开始采集数据...")
-    print(f"  通道: {channel}")
-    print(f"  时长: {duration if duration > 0 else '无限'} 秒")
-    print(f"  滑动平均窗口: {moving_avg}")
+    print(f"Acquisition started")
+    print(f"  Channel: {channel}")
+    print(f"  Duration: {duration if duration > 0 else 'unlimited'} s")
+    print(f"  Moving average: {moving_avg}")
 
     acquisition_thread.start()
 
@@ -363,14 +363,14 @@ def cmd_start(args, controller):
         acquisition_thread.join()
 
         if duration > 0:
-            print(f"\nOK 采集完成 ({duration} 秒)")
+            print(f"\nOK Acquisition done ({duration} s)")
         else:
-            print("\nOK 采集已停止")
+            print("\nOK Acquisition stopped")
 
     except KeyboardInterrupt:
-        print("\n\nWARN 用户中断")
+        print("\n\nWARN Interrupted")
         acquisition_thread.stop()
-        print("正在停止采集...")
+        print("Stopping acquisition...")
 
     finally:
         controller.send_stop_command()
@@ -381,40 +381,40 @@ def cmd_start(args, controller):
 
 
 def cmd_disconnect(args, controller):
-    """断开连接命令"""
+    """Disconnect命令"""
     controller.disconnect()
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='FBG解调仪命令行工具',
+        description='FBG demodulator CLI',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例:
+Examples:
   %(prog)s connect
   %(prog)s start --duration 600 --filename sensor_A_H2-3percent_MFC1-30sccm_MFC2-1slm_H2time-40s_Record-600s_FBG-ch1_cycle01 --channel 1
   %(prog)s disconnect
         """
     )
 
-    subparsers = parser.add_subparsers(dest='command', help='可用命令')
+    subparsers = parser.add_subparsers(dest='command', help='commands')
 
     # connect命令
-    connect_parser = subparsers.add_parser('connect', help='连接设备')
-    connect_parser.add_argument('--ip', default=DEFAULT_FBG_IP, help='设备IP地址 (默认192.168.1.1)')
-    connect_parser.add_argument('--port', type=int, default=DEFAULT_FBG_PORT, help='端口号 (默认1000)')
+    connect_parser = subparsers.add_parser('connect', help='Connect device')
+    connect_parser.add_argument('--ip', default=DEFAULT_FBG_IP, help='Device IP (default: 192.168.1.1)')
+    connect_parser.add_argument('--port', type=int, default=DEFAULT_FBG_PORT, help='Port (default: 1000)')
 
     # start命令
-    start_parser = subparsers.add_parser('start', help='开始采集')
-    start_parser.add_argument('--ip', default=DEFAULT_FBG_IP, help='设备IP地址 (默认192.168.1.1)')
-    start_parser.add_argument('--port', type=int, default=DEFAULT_FBG_PORT, help='端口号 (默认1000)')
-    start_parser.add_argument('--duration', type=int, help='采集时长 (秒, 0表示无限)')
-    start_parser.add_argument('--filename', help='保存文件名 (不含扩展名)')
-    start_parser.add_argument('--channel', type=int, default=1, help='选择通道 (1-8, 默认1)')
-    start_parser.add_argument('--moving-average', type=int, default=1, help='滑动平均窗口 (默认1)')
+    start_parser = subparsers.add_parser('start', help='Start acquisition')
+    start_parser.add_argument('--ip', default=DEFAULT_FBG_IP, help='Device IP (default: 192.168.1.1)')
+    start_parser.add_argument('--port', type=int, default=DEFAULT_FBG_PORT, help='Port (default: 1000)')
+    start_parser.add_argument('--duration', type=int, help='Acquisition duration (s, 0 = unlimited)')
+    start_parser.add_argument('--filename', help='Output filename without extension')
+    start_parser.add_argument('--channel', type=int, default=1, help='Channel (1-8, default: 1)')
+    start_parser.add_argument('--moving-average', type=int, default=1, help='Moving average window (default: 1)')
 
     # disconnect命令
-    subparsers.add_parser('disconnect', help='断开连接')
+    subparsers.add_parser('disconnect', help='Disconnect')
 
     args = parser.parse_args()
 
@@ -427,7 +427,7 @@ def main():
 
     # 信号处理
     def signal_handler(sig, frame):
-        print("\n接收到中断信号，正在清理...")
+        print("\nInterrupt received, cleaning up...")
         controller.disconnect()
         sys.exit(0)
 

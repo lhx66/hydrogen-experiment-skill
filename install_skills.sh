@@ -60,7 +60,7 @@ error()   { printf "${RED}[ERROR]${NC} %s\n" "$1"; }
 # 检测 Python 环境
 # ---------------------------------------------------------------------------
 check_python() {
-    info "检测 Python 环境..."
+    info "Checking Python..."
 
     # 检测已安装的 Python
     PYTHON_CMD=""
@@ -72,13 +72,13 @@ check_python() {
 
             if [ "$PYTHON_MAJOR" -ge "$MIN_PYTHON_MAJOR" ] && [ "$PYTHON_MINOR" -ge "$MIN_PYTHON_MINOR" ]; then
                 PYTHON_CMD="$cmd"
-                success "找到 Python $PYTHON_VERSION ($cmd)"
+                success "Found Python $PYTHON_VERSION ($cmd)"
                 return 0
             fi
         fi
     done
 
-    error "未找到 Python $MIN_PYTHON_MAJOR.$MIN_PYTHON_MINOR+"
+    error "Python $MIN_PYTHON_MAJOR.$MIN_PYTHON_MINOR+ not found"
     return 1
 }
 
@@ -86,34 +86,34 @@ check_python() {
 # 安装 Python (不同平台)
 # ---------------------------------------------------------------------------
 install_python() {
-    warn "需要安装 Python $MIN_PYTHON_MAJOR.$MIN_PYTHON_MINOR+"
+    warn "Python $MIN_PYTHON_MAJOR.$MIN_PYTHON_MINOR+ is required"
 
     # 检测操作系统
     if [ "$(uname -s)" = "Darwin" ]; then
         # macOS
         if command -v brew >/dev/null 2>&1; then
-            info "使用 Homebrew 安装 Python..."
+            info "Installing Python with Homebrew..."
             brew install python@3.9
         else
-            error "请先安装 Homebrew: https://brew.sh"
-            info "或手动安装 Python: https://www.python.org/downloads/"
+            error "Install Homebrew first: https://brew.sh"
+            info "Or install Python manually: https://www.python.org/downloads/"
             exit 1
         fi
     elif [ -f /etc/debian_version ] || [ -f /etc/ubuntu_version ]; then
         # Debian/Ubuntu
-        info "使用 apt 安装 Python..."
+        info "Installing Python with apt..."
         sudo apt update
         sudo apt install -y python3.9 python3.9-venv python3-pip
     elif [ -f /etc/redhat-release ]; then
         # RHEL/CentOS/Fedora
-        info "使用 yum/dnf 安装 Python..."
+        info "Installing Python with yum/dnf..."
         if command -v dnf >/dev/null 2>&1; then
             sudo dnf install -y python39 python39-pip
         else
             sudo yum install -y python39 python39-pip
         fi
     else
-        error "不支持的操作系统，请手动安装 Python: https://www.python.org/downloads/"
+        error "Unsupported OS. Install Python manually: https://www.python.org/downloads/"
         exit 1
     fi
 }
@@ -122,16 +122,16 @@ install_python() {
 # 安装 Python 依赖
 # ---------------------------------------------------------------------------
 install_python_dependencies() {
-    info "安装 Python 依赖包..."
+    info "Installing Python dependencies..."
 
     if [ ! -f "$REQUIREMENTS_FILE" ]; then
-        warn "未找到 requirements.txt，跳过依赖安装"
+        warn "requirements.txt not found; skipping dependencies"
         return 0
     fi
 
     # 检查 pip
     if ! $PYTHON_CMD -m pip --version >/dev/null 2>&1; then
-        info "安装 pip..."
+        info "Installing pip..."
         if [ "$(uname -s)" = "Darwin" ]; then
             $PYTHON_CMD -m ensurepip --upgrade
         else
@@ -140,15 +140,15 @@ install_python_dependencies() {
     fi
 
     # 安装依赖
-    info "正在安装依赖包 (可能需要几分钟)..."
+    info "Installing dependencies; this may take a few minutes..."
     if [ "${HYDROGEN_EXPERIMENT_UPGRADE_PIP:-}" = "1" ]; then
         if ! $PYTHON_CMD -m pip install --upgrade pip; then
-            warn "pip 升级失败，将继续使用当前 pip 安装依赖"
+            warn "pip upgrade failed; using current pip"
         fi
     fi
     $PYTHON_CMD -m pip install -r "$REQUIREMENTS_FILE"
 
-    success "Python 依赖安装完成"
+    success "Python dependencies installed"
 }
 
 # ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ platform_display() {
 # 清理旧版 Skill 与斜杠命令
 # ---------------------------------------------------------------------------
 cleanup_old_skill() {
-    info "清理旧版 Skill 和斜杠命令..."
+    info "Cleaning old skill and slash commands..."
     rm -rf "$HOME/.claude/skills/$SKILL_NAME"
     rm -rf "$HOME/.claude/skills/$SKILL_DIR_NAME"
     rm -f "$HOME/.claude/commands/$COMMAND_NAME.md"
@@ -217,7 +217,7 @@ create_symlink() {
 # 设置 CLI 工具可执行权限
 # ---------------------------------------------------------------------------
 setup_cli_tools() {
-    info "设置 CLI 工具..."
+    info "Setting up CLI tools..."
 
     # 确保 Python 脚本有执行权限
     chmod +x "$CANONICAL_DIR/cli_tools"/*.py 2>/dev/null || true
@@ -242,13 +242,13 @@ EOF
 # 主执行流程
 # ---------------------------------------------------------------------------
 main() {
-    printf "\n${BOLD}光纤氢气传感器实验自动化 Skill — 安装程序${NC}\n\n"
+    printf "\n${BOLD}Hydrogen Experiment Skill - Installer${NC}\n\n"
 
     # 1. 检测/安装 Python
     if ! check_python; then
         install_python
         if ! check_python; then
-            error "Python 安装失败"
+            error "Python install failed"
             exit 1
         fi
     fi
@@ -257,16 +257,16 @@ main() {
 
     # 2. 本地安装检查
     if [ "$LOCAL_INSTALL" = true ]; then
-        info "本地安装模式: $CANONICAL_DIR"
+        info "Local install: $CANONICAL_DIR"
     else
         if ! command -v git >/dev/null 2>&1; then
-            warn "未检测到 git 环境，请先安装 git"
+            warn "git not found; install git first"
             exit 1
         fi
 
         # 远程安装：拉取代码库
         if [ -d "$CANONICAL_DIR/.git" ]; then
-            info "正在从远程同步最新代码..."
+            info "Syncing latest code..."
             cd "$CANONICAL_DIR"
             git remote set-url origin "$REPO_URL"
             git fetch origin main
@@ -279,11 +279,11 @@ main() {
                    [ -f "$CANONICAL_DIR/install_skills.sh" ]; then
                     rm -rf "$CANONICAL_DIR"
                 else
-                    error "安装目录已存在但不是 Git 仓库: $CANONICAL_DIR"
+                    error "Install directory exists and is not a Git repo: $CANONICAL_DIR"
                     exit 1
                 fi
             fi
-            info "正在克隆远程仓库: $CANONICAL_DIR"
+            info "Cloning repository: $CANONICAL_DIR"
             mkdir -p "$(dirname "$CANONICAL_DIR")"
             rm -rf "$CANONICAL_DIR"
             git clone "$REPO_URL" "$CANONICAL_DIR"
@@ -292,10 +292,10 @@ main() {
 
     # 3. 检查 Skill 文件
     if [ ! -f "$ACTIVE_SKILLS_DIR/SKILL.md" ]; then
-        error "未找到 Skill 文件: $ACTIVE_SKILLS_DIR/SKILL.md"
+        error "Skill file not found: $ACTIVE_SKILLS_DIR/SKILL.md"
         exit 1
     fi
-    success "Skill 核心文件准备完成"
+    success "Skill files ready"
 
     # 4. 安装 Python 依赖
     install_python_dependencies
@@ -305,7 +305,7 @@ main() {
 
     # 6. 为 Claude Code / Codex 注册斜杠命令
     if [ -d "$HOME/.claude" ]; then
-        info "正在为 Claude Code 生成 /$COMMAND_NAME 快捷指令..."
+        info "Creating Claude Code /$COMMAND_NAME command..."
         mkdir -p "$HOME/.claude/commands"
 
         # 清理旧版命令
@@ -316,64 +316,64 @@ main() {
 
         cat > "$HOME/.claude/commands/$COMMAND_NAME.md" << EOF
 ---
-description: 自动化执行光纤氢气传感器实验
+description: Run optical fiber hydrogen sensor experiments
 ---
 
-请先读取并严格遵循 $ACTIVE_SKILLS_DIR/SKILL.md 中的守则。
+Read and follow $ACTIVE_SKILLS_DIR/SKILL.md first.
 
-然后解析用户的实验请求（自然语言），并询问实验结果保存文件夹、传感器名称和 MFC 串口。
-优先调用总程序，不要手动拼接底层 MFC/FBG/功率计命令。
+Parse the request and ask for output folder, sensor name, and MFC port.
+Prefer experiment_cli.py; avoid manual low-level command assembly.
 
-固定设备地址：
-- FBG 解调仪：192.168.1.1:1000
-- 功率计：TCPIP0::192.169.1.102::inst0::INSTR
+Fixed device addresses:
+- FBG demodulator: 192.168.1.1:1000
+- Powermeter: TCPIP0::192.169.1.102::inst0::INSTR
 
-支持的自然语言请求示例：
-- "进行十次4%氢气测试，每次40秒，使用功率计测量"
-- "进行5次2%氢气测试，每次30秒，使用FBG测量"
-- "做三次1%氢气测试，每次20秒"
+Example requests:
+- "Run 10 cycles at 4% H2, 40s each, using powermeter"
+- "Run 5 cycles at 2% H2, 30s each, using FBG"
+- "Run 3 cycles at 1% H2, 20s each"
 
-推荐先 dry-run：
+Recommended dry-run:
 ~~~bash
 cd "$CANONICAL_DIR"
 source cli_tools/env_setup.sh
 python cli_tools/experiment_cli.py run --output-folder "E:/experiments/2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --instrument powermeter --loop-count 10 --step h2:4:40 --dry-run
 ~~~
 EOF
-        success "斜杠命令注册成功: /$COMMAND_NAME"
+        success "Slash command registered: /$COMMAND_NAME"
     fi
 
     if [ -d "$HOME/.codex" ]; then
-        info "正在为 Codex 生成 /$COMMAND_NAME 快捷指令..."
+        info "Creating Codex /$COMMAND_NAME command..."
         mkdir -p "$HOME/.codex/commands"
 
         cat > "$HOME/.codex/commands/$COMMAND_NAME.md" << EOF
 ---
-description: 自动化执行光纤氢气传感器实验
+description: Run optical fiber hydrogen sensor experiments
 ---
 
-请先读取并严格遵循 $ACTIVE_SKILLS_DIR/SKILL.md 中的守则。
+Read and follow $ACTIVE_SKILLS_DIR/SKILL.md first.
 
-然后使用 hydrogen-experiment skill 解析用户的实验请求（自然语言），并询问实验结果保存文件夹、传感器名称和 MFC 串口。
-优先调用总程序，不要手动拼接底层 MFC/FBG/功率计命令。
+Use the hydrogen-experiment skill; ask for output folder, sensor name, and MFC port.
+Prefer experiment_cli.py; avoid manual low-level command assembly.
 
-固定设备地址：
-- FBG 解调仪：192.168.1.1:1000
-- 功率计：TCPIP0::192.169.1.102::inst0::INSTR
+Fixed device addresses:
+- FBG demodulator: 192.168.1.1:1000
+- Powermeter: TCPIP0::192.169.1.102::inst0::INSTR
 
-支持的自然语言请求示例：
-- "进行十次4%氢气测试，每次40秒，使用功率计测量"
-- "进行5次2%氢气测试，每次30秒，使用FBG测量"
-- "做三次1%氢气测试，每次20秒"
+Example requests:
+- "Run 10 cycles at 4% H2, 40s each, using powermeter"
+- "Run 5 cycles at 2% H2, 30s each, using FBG"
+- "Run 3 cycles at 1% H2, 20s each"
 
-推荐先 dry-run：
+Recommended dry-run:
 ~~~bash
 cd "$CANONICAL_DIR"
 source cli_tools/env_setup.sh
 python cli_tools/experiment_cli.py run --output-folder "E:/experiments/2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --instrument powermeter --loop-count 10 --step h2:4:40 --dry-run
 ~~~
 EOF
-        success "注册 Codex 斜杠命令成功: /$COMMAND_NAME"
+        success "Codex slash command registered: /$COMMAND_NAME"
     fi
 
     # 7. 分发到各平台
@@ -385,32 +385,32 @@ EOF
         dest="$(platform_path "$platform")"
         create_symlink "$ACTIVE_SKILLS_DIR" "$dest"
         name="$(platform_display "$platform")"
-        success "已分发至 $name → $dest"
+        success "Installed to $name -> $dest"
         installed="$installed $name,"
         count=$((count + 1))
     done
 
     # 8. 安装完成总结
-    printf "\n${BOLD}安装完成！${NC}\n\n"
+    printf "\n${BOLD}Install complete${NC}\n\n"
 
-    printf "${BOLD}使用方法：${NC}\n"
-    printf "  1. 重启 Claude Code 或 Codex\n"
-    printf "  2. 使用斜杠命令：\n\n"
-    printf "    ${YELLOW}/$COMMAND_NAME 进行十次4%氢气测试，每次40秒，使用功率计测量${NC}\n\n"
+    printf "${BOLD}Usage:${NC}\n"
+    printf "  1. Restart Claude Code or Codex\n"
+    printf "  2. Use slash command:\n\n"
+    printf "    ${YELLOW}/$COMMAND_NAME Run 10 cycles at 4% H2, 40s each, using powermeter${NC}\n\n"
 
-    printf "${BOLD}环境设置：${NC}\n"
-    printf "  首次使用前，设置 PYTHONPATH：\n"
+    printf "${BOLD}Environment:${NC}\n"
+    printf "  Before first use, set PYTHONPATH:\n"
     printf "  ${GREEN}cd $(dirname "$CANONICAL_DIR")/$(basename "$CANONICAL_DIR")${NC}\n"
     printf "  ${GREEN}source cli_tools/env_setup.sh${NC}\n\n"
 
-    printf "${BOLD}Python 版本：${NC}\n"
+    printf "${BOLD}Python version:${NC}\n"
     printf "  $PYTHON_VERSION\n\n"
 
-    printf "${BOLD}Skill位置：${NC}\n"
+    printf "${BOLD}Skill path:${NC}\n"
     printf "  $ACTIVE_SKILLS_DIR\n\n"
 
     if [ $count -gt 0 ]; then
-        printf "${BOLD}已分发到平台：${NC}\n"
+        printf "${BOLD}Installed platforms:${NC}\n"
         for platform in $platforms; do
             name="$(platform_display "$platform")"
             printf "  - $name\n"
@@ -418,7 +418,7 @@ EOF
         printf "\n"
     fi
 
-    printf "详细文档请查看: $ACTIVE_SKILLS_DIR/SKILL.md\n"
+    printf "Docs: $ACTIVE_SKILLS_DIR/SKILL.md\n"
 }
 
 main

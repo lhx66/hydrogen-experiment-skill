@@ -32,18 +32,18 @@ sys.path.insert(0, str(analysis_dir))
 try:
     from analyze_sensor_response import analyze_sensor_data, batch_analyze, plot_response_curve, plot_multiple_cycles
 except ImportError:
-    print("警告: 无法导入分析模块")
+    print("WARN Analysis module unavailable")
 
 try:
     from mfc_cli import MFCController
 except ImportError:
-    print("警告: 无法导入MFC控制模块")
+    print("WARN MFC module unavailable")
     MFCController = None
 
 try:
     from fbg_cli import FBGDemodulator
 except ImportError:
-    print("警告: 无法导入FBG控制模块")
+    print("WARN FBG module unavailable")
     FBGDemodulator = None
 
 
@@ -53,6 +53,11 @@ DEFAULT_FBG_PORT = 1000
 DEFAULT_FBG_CHANNEL = 1
 DEFAULT_POWERMETER_RESOURCE = 'TCPIP0::192.169.1.102::inst0::INSTR'
 HIGH_CONCENTRATION_AUTH_LIMIT_PERCENT = 4.0
+STOP_REQUEST_FILENAME = '.hydrogen_experiment_stop.json'
+
+
+class ExperimentAborted(Exception):
+    pass
 
 
 def _parse_chinese_number(text: str) -> Optional[int]:
@@ -92,7 +97,7 @@ def parse_experiment_request_text(request: str) -> Dict:
         loop_count = _parse_chinese_number(loop_match.group(1)) or loop_count
 
     conc_value = 0.0
-    concentration = '未知'
+    concentration = 'unknown'
     conc_patterns = [
         r'(\d+(?:\.\d+)?)\s*(?:%|％)\s*(?:氢气|氢|H2)?',
         r'(?:氢气|氢|H2)\s*(\d+(?:\.\d+)?)\s*(?:%|％)',
@@ -234,11 +239,11 @@ def normalize_flow_steps(flow_steps: List[Dict],
         step_type = str(step.get('type', '')).strip().lower()
         duration = int(step.get('duration_s', step.get('duration', 0)))
         if duration < 0:
-            raise ValueError(f"步骤 {index} 时长不能为负数")
+            raise ValueError(f"Step {index} duration cannot be negative")
 
         if step_type in ('h2', 'hydrogen'):
             if duration <= 0:
-                raise ValueError(f"步骤 {index} 通氢时间必须大于0")
+                raise ValueError(f"Step {index} H2 duration must be > 0")
             concentration_value = step.get('concentration_percent')
             if concentration_value is None:
                 concentration_value = parse_concentration_percent(step.get('concentration'))
@@ -257,10 +262,10 @@ def normalize_flow_steps(flow_steps: List[Dict],
                 'duration_s': duration,
             })
         else:
-            raise ValueError(f"步骤 {index} 类型无效: {step_type}")
+            raise ValueError(f"Step {index} type is invalid: {step_type}")
 
     if not any(step['type'] == 'h2' for step in normalized):
-        raise ValueError("实验流程至少需要一个 h2 步骤")
+        raise ValueError("At least one h2 step is required")
     return normalized
 
 
@@ -321,7 +326,7 @@ def require_high_concentration_authorization(concentration_percent: float,
     if concentration_percent > HIGH_CONCENTRATION_AUTH_LIMIT_PERCENT and not high_concentration_authorized:
         concentration_text = format_concentration(concentration_percent)
         raise PermissionError(
-            f"{concentration_text} 氢气浓度超过4%，需要用户明确授权后才能启动实验"
+            f"{concentration_text} H2 exceeds 4%; explicit user authorization is required"
         )
 
 
@@ -345,7 +350,102 @@ class HydrogenExperimentSkill:
         self.current_experiment = None
         self.mfc_controller = None  # 直接使用MFCController实例，保持长连接
         self.data_process = None
+        self.active_data_process = None
+        self.stop_requested = False
+        self.stop_reason = None
         self.cycle_plots = []  # 存储每次循环的图表
+
+    def request_stop(self, reason="User requested stop") -> None:
+        """Request immediate experiment stop and close MFC1."""
+        self.stop_requested = True
+        self.stop_reason = reason
+        if self.mfc_controller:
+            if hasattr(self.mfc_controller, 'request_stop'):
+                self.mfc_controller.request_stop(reason)
+            else:
+                try:
+                    self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
+                except Exception:
+                    pass
+        if self.active_data_process:
+            self._terminate_data_process(self.active_data_process)
+
+    def _handle_mfc_safety_stop(self, event_type, value) -> None:
+        if event_type == 'mfc2_low':
+            self.stop_requested = True
+            self.stop_reason = f"MFC2 flow low: {value:.3f} slm"
+
+    def _stop_request_paths(self, experiment_path: Optional[Path] = None) -> List[Path]:
+        paths = []
+        if experiment_path:
+            paths.append(Path(experiment_path) / STOP_REQUEST_FILENAME)
+        paths.append(self.experiment_dir / STOP_REQUEST_FILENAME)
+        unique_paths = []
+        for path in paths:
+            if path not in unique_paths:
+                unique_paths.append(path)
+        return unique_paths
+
+    def _clear_stop_requests(self, experiment_path: Optional[Path] = None) -> None:
+        for path in self._stop_request_paths(experiment_path):
+            try:
+                if path.exists():
+                    path.unlink()
+            except Exception:
+                pass
+
+    def _read_stop_request(self, experiment_path: Optional[Path] = None) -> Optional[str]:
+        for path in self._stop_request_paths(experiment_path):
+            if not path.exists():
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding='utf-8'))
+                return str(payload.get('reason') or 'Stop requested')
+            except Exception:
+                return 'Stop requested'
+        return None
+
+    def _check_abort(self, experiment_path: Optional[Path] = None) -> None:
+        external_reason = self._read_stop_request(experiment_path)
+        if external_reason:
+            self.request_stop(external_reason)
+
+        if self.mfc_controller and getattr(self.mfc_controller, 'stop_requested', False):
+            reason = getattr(self.mfc_controller, 'stop_reason', None) or 'MFC safety stop requested'
+            self.stop_requested = True
+            self.stop_reason = reason
+
+        if self.stop_requested:
+            raise ExperimentAborted(self.stop_reason or 'Stop requested')
+
+    def _sleep_with_abort(self, duration: float, experiment_path: Optional[Path] = None) -> None:
+        whole_seconds = int(duration)
+        remainder = float(duration) - whole_seconds
+        for _ in range(whole_seconds):
+            self._check_abort(experiment_path)
+            time.sleep(1)
+            self._check_abort(experiment_path)
+        if remainder > 0:
+            self._check_abort(experiment_path)
+            time.sleep(remainder)
+            self._check_abort(experiment_path)
+
+    def _terminate_data_process(self, process) -> None:
+        if not process:
+            return
+        try:
+            if hasattr(process, 'poll') and process.poll() is not None:
+                return
+        except Exception:
+            pass
+        try:
+            process.terminate()
+            process.wait(timeout=5)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
 
     def parse_experiment_request(self, request: str) -> Optional[Dict]:
         """
@@ -358,7 +458,7 @@ class HydrogenExperimentSkill:
         返回实验参数字典
         """
         parsed = parse_experiment_request_text(request)
-        if parsed['concentration'] != '未知':
+        if parsed['concentration'] != 'unknown':
             return parsed
 
         import re
@@ -383,7 +483,7 @@ class HydrogenExperimentSkill:
             r'氢\s*(\d+(?:\.\d+)?)\s*[%％]',
             r'concentr?ation\s*[=: ]\s*(\d+(?:\.\d+)?)',
         ]
-        concentration = "未知"
+        concentration = "unknown"
         conc_value = 0.0
         for pattern in conc_patterns:
             match = re.search(pattern, request, re.IGNORECASE)
@@ -510,16 +610,16 @@ class HydrogenExperimentSkill:
         experiment_path.mkdir(exist_ok=True)
 
         print("=" * 60)
-        print("光纤氢气传感器实验")
+        print("Hydrogen sensor experiment")
         print("=" * 60)
-        print(f"传感器: {sensor_name}")
-        print(f"氢气浓度: {concentration} (流量: {h2_flow} sccm)")
-        print(f"每次通氢时间: {h2_time} 秒")
-        print(f"循环次数: {loop_count}")
-        print(f"测量仪器: {instrument}")
-        print(f"总测量时长: {total_duration} 秒")
-        print(f"循环间隔: {loop_interval} 秒")
-        print(f"实验目录: {experiment_path}")
+        print(f"Sensor: {sensor_name}")
+        print(f"H2: {concentration} (flow: {h2_flow} sccm)")
+        print(f"H2 duration: {h2_time} s")
+        print(f"Cycles: {loop_count}")
+        print(f"Instrument: {instrument}")
+        print(f"Record duration: {total_duration} s")
+        print(f"Cycle interval: {loop_interval} s")
+        print(f"Output dir: {experiment_path}")
         print("=" * 60)
 
         # 存储实验结果
@@ -550,26 +650,31 @@ class HydrogenExperimentSkill:
             return results
 
         self.cycle_plots = []  # 清空之前的图表数据
+        self.stop_requested = False
+        self.stop_reason = None
+        self._clear_stop_requests(experiment_path)
 
         try:
             # 连接MFC（使用MFCController直接连接，保持长连接）
-            print("\n[1/4] 连接MFC...")
+            print("\n[1/4] Connect MFC...")
             if not self._connect_mfc_direct(mfc_port, mfc2_flow):
-                raise Exception("MFC连接失败")
+                raise Exception("MFC connect failed")
 
             # 连接测量仪器
-            print(f"\n[2/4] 连接{instrument}...")
+            print(f"\n[2/4] Connect {instrument}...")
             if instrument == "powermeter":
                 if not self._connect_powermeter(powermeter_resource):
-                    raise Exception("功率计连接失败")
+                    raise Exception("Powermeter connect failed")
             else:
                 if not self._connect_fbg(fbg_ip, fbg_port):
-                    raise Exception("FBG解调仪连接失败")
+                    raise Exception("FBG connect failed")
 
             # 执行实验循环
-            print(f"\n[3/4] 开始实验循环...")
+            print("\n[3/4] Run cycles...")
             for cycle in range(1, loop_count + 1):
-                print(f"\n--- 循环 {cycle}/{loop_count} ---")
+                self._check_abort(experiment_path)
+                print(f"\n--- Cycle {cycle}/{loop_count} ---")
+                print(f"Progress: cycle {cycle}/{loop_count} start")
 
                 cycle_result = self._run_single_cycle(
                     cycle=cycle,
@@ -589,23 +694,30 @@ class HydrogenExperimentSkill:
                 )
 
                 results['cycles'].append(cycle_result)
+                if cycle_result.get('aborted'):
+                    results['aborted'] = True
+                    results['error'] = cycle_result.get('error', 'Experiment aborted')
+                    break
 
                 # 实验程序只负责产出CSV；分析和绘图由agent调用独立脚本完成。
                 if cycle_result.get('data_file'):
                     self.cycle_plots.append((cycle, cycle_result['data_file']))
-                    print(f"  OK 本轮CSV已生成: {cycle_result['data_file']}")
+                    print(f"  OK CSV: {cycle_result['data_file']}")
 
                 # 循环间隔（非最后一次循环时等待）
                 if cycle < loop_count:
-                    print(f"  循环间隔等待 {loop_interval} 秒...")
-                    time.sleep(loop_interval)
+                    print(f"  Wait interval: {loop_interval} s")
+                    self._sleep_with_abort(loop_interval, experiment_path)
 
             # 关闭所有设备
-            print(f"\n[4/4] 关闭设备...")
+            print("\n[4/4] Close devices...")
             self._cleanup()
 
-            results['overall_success'] = True
-            print("\nOK 实验完成!")
+            if results.get('aborted'):
+                print(f"\nABORT {results.get('error', 'Experiment aborted')}")
+            else:
+                results['overall_success'] = True
+                print("\nOK Experiment done")
 
             self._finalize_experiment_outputs(
                 results=results,
@@ -616,8 +728,14 @@ class HydrogenExperimentSkill:
                 save_artifacts=save_artifacts,
             )
 
+        except ExperimentAborted as e:
+            print(f"\nABORT {e}")
+            self.request_stop(str(e))
+            self._cleanup()
+            results['aborted'] = True
+            results['error'] = str(e)
         except Exception as e:
-            print(f"\nFAIL 实验失败: {e}")
+            print(f"\nFAIL Experiment failed: {e}")
             self._cleanup()
             results['error'] = str(e)
 
@@ -696,29 +814,34 @@ class HydrogenExperimentSkill:
             return results
 
         if int(total_duration) < sequence_duration:
-            results['error'] = '每轮记录总时长不能短于通氢流程总时长'
+            results['error'] = 'total_duration must be >= flow sequence duration'
             print(f"FAIL {results['error']}")
             return results
 
         experiment_path.mkdir(exist_ok=True)
         self.cycle_plots = []
+        self.stop_requested = False
+        self.stop_reason = None
+        self._clear_stop_requests(experiment_path)
 
         try:
-            print("\n[1/4] 连接MFC...")
+            print("\n[1/4] Connect MFC...")
             if not self._connect_mfc_direct(mfc_port, mfc2_flow):
-                raise Exception("MFC连接失败")
+                raise Exception("MFC connect failed")
 
-            print(f"\n[2/4] 连接{instrument}...")
+            print(f"\n[2/4] Connect {instrument}...")
             if instrument == "powermeter":
                 if not self._connect_powermeter(powermeter_resource):
-                    raise Exception("功率计连接失败")
+                    raise Exception("Powermeter connect failed")
             else:
                 if not self._connect_fbg(fbg_ip, fbg_port):
-                    raise Exception("FBG解调仪连接失败")
+                    raise Exception("FBG connect failed")
 
-            print(f"\n[3/4] 开始参数化实验循环...")
+            print("\n[3/4] Run sequence cycles...")
             for cycle in range(1, loop_count + 1):
-                print(f"\n--- 循环 {cycle}/{loop_count} ---")
+                self._check_abort(experiment_path)
+                print(f"\n--- Cycle {cycle}/{loop_count} ---")
+                print(f"Progress: cycle {cycle}/{loop_count} start")
                 cycle_result = self._run_sequence_cycle(
                     cycle=cycle,
                     experiment_path=experiment_path,
@@ -733,18 +856,25 @@ class HydrogenExperimentSkill:
                     fbg_channel=fbg_channel,
                 )
                 results['cycles'].append(cycle_result)
+                if cycle_result.get('aborted'):
+                    results['aborted'] = True
+                    results['error'] = cycle_result.get('error', 'Experiment aborted')
+                    break
                 if cycle_result.get('data_file'):
                     self.cycle_plots.append((cycle, cycle_result['data_file']))
-                    print(f"  OK 本轮CSV已生成: {cycle_result['data_file']}")
+                    print(f"  OK CSV: {cycle_result['data_file']}")
 
                 if cycle < loop_count:
-                    print(f"  循环间隔等待 {loop_interval} 秒...")
-                    time.sleep(loop_interval)
+                    print(f"  Wait interval: {loop_interval} s")
+                    self._sleep_with_abort(loop_interval, experiment_path)
 
-            print(f"\n[4/4] 关闭设备...")
+            print("\n[4/4] Close devices...")
             self._cleanup()
-            results['overall_success'] = True
-            print("\nOK 实验完成!")
+            if results.get('aborted'):
+                print(f"\nABORT {results.get('error', 'Experiment aborted')}")
+            else:
+                results['overall_success'] = True
+                print("\nOK Experiment done")
 
             self._finalize_experiment_outputs(
                 results=results,
@@ -754,8 +884,14 @@ class HydrogenExperimentSkill:
                 concentration=sequence_label,
                 save_artifacts=save_artifacts,
             )
+        except ExperimentAborted as e:
+            print(f"\nABORT {e}")
+            self.request_stop(str(e))
+            self._cleanup()
+            results['aborted'] = True
+            results['error'] = str(e)
         except Exception as e:
-            print(f"\nFAIL 实验失败: {e}")
+            print(f"\nFAIL Experiment failed: {e}")
             self._cleanup()
             results['error'] = str(e)
 
@@ -797,7 +933,7 @@ class HydrogenExperimentSkill:
             results['result_file'] = str(result_file)
             with open(result_file, 'w', encoding='utf-8') as f:
                 json.dump(results, f, ensure_ascii=False, indent=2)
-            print(f"结果已保存: {result_file}")
+            print(f"Saved: {result_file}")
             saved['result_file'] = str(result_file)
         else:
             results['json_displayed'] = True
@@ -810,13 +946,16 @@ class HydrogenExperimentSkill:
     def _connect_mfc_direct(self, port: str, mfc2_flow: float = DEFAULT_MFC2_FLOW_SLM) -> bool:
         """直接使用MFCController连接MFC，保持长连接"""
         if MFCController is None:
-            print("错误: MFCController模块未导入")
+            print("ERROR MFCController unavailable")
             return False
 
         try:
             self.mfc_controller = MFCController()
             if not self.mfc_controller.connect(port, baudrate=9600):
                 return False
+
+            if hasattr(self.mfc_controller, 'set_safety_callback'):
+                self.mfc_controller.set_safety_callback(self._handle_mfc_safety_stop)
 
             # 启动流量监控
             self.mfc_controller.start_monitoring(interval=0.5)
@@ -825,22 +964,22 @@ class HydrogenExperimentSkill:
             self.mfc_controller.init_mfc_mode()
 
             # 先打开MFC2载气并等待稳定
-            print(f"打开MFC2载气: {mfc2_flow} slm")
+            print(f"Set MFC2 carrier: {mfc2_flow} slm")
             if not self.mfc_controller.set_flow(self.mfc_controller.addresses[1], mfc2_flow):
-                print("警告: MFC2设置失败，继续尝试")
+                print("WARN MFC2 set failed; continuing")
 
             # 等待MFC2稳定
-            print("等待MFC2稳定 (5秒)...")
+            print("Wait MFC2 stable (5 s)...")
             for i in range(5):
                 flow2 = self.mfc_controller.get_flow(self.mfc_controller.addresses[1])
                 print(f"\r  MFC2: {flow2:.3f} slm ({i+1}/5s)", end='', flush=True)
                 time.sleep(1)
             print()
-            print("OK MFC连接并初始化完成")
+            print("OK MFC ready")
             return True
 
         except Exception as e:
-            print(f"MFC连接异常: {e}")
+            print(f"MFC connect error: {e}")
             return False
 
     def _connect_powermeter(self, resource: str) -> bool:
@@ -853,13 +992,13 @@ class HydrogenExperimentSkill:
             print(result.stdout)
             return True
         except Exception as e:
-            print(f"功率计连接异常: {e}")
+            print(f"Powermeter connect error: {e}")
             return False
 
     def _connect_fbg(self, ip: str, port: int = DEFAULT_FBG_PORT) -> bool:
         """连接FBG解调仪"""
         if FBGDemodulator is None:
-            print("错误: FBGDemodulator模块未导入")
+            print("ERROR FBGDemodulator unavailable")
             return False
 
         controller = FBGDemodulator()
@@ -869,7 +1008,7 @@ class HydrogenExperimentSkill:
                 controller.disconnect(send_stop=False)
             return ok
         except Exception as e:
-            print(f"FBG连接异常: {e}")
+            print(f"FBG connect error: {e}")
             return False
 
     def _run_sequence_cycle(self,
@@ -884,7 +1023,7 @@ class HydrogenExperimentSkill:
                             fbg_ip: str = DEFAULT_FBG_IP,
                             fbg_port: int = DEFAULT_FBG_PORT,
                             fbg_channel: int = DEFAULT_FBG_CHANNEL) -> Dict:
-        """执行一轮参数化通氢流程。"""
+        """Run one parameterized flow cycle."""
         filename = build_sequence_file_stem(
             sensor_name=sensor_name,
             flow_steps=flow_steps,
@@ -904,6 +1043,7 @@ class HydrogenExperimentSkill:
         data_process = None
 
         try:
+            self._check_abort(experiment_path)
             if instrument == "powermeter":
                 data_process = self._start_powermeter_acquisition(
                     filename=str(experiment_path / filename),
@@ -918,21 +1058,22 @@ class HydrogenExperimentSkill:
                     fbg_port=fbg_port,
                     channel=fbg_channel,
                 )
-
-            time.sleep(1)
+            self.active_data_process = data_process
+            self._sleep_with_abort(1, experiment_path)
 
             elapsed = 0
             for step_index, step in enumerate(flow_steps, start=1):
+                self._check_abort(experiment_path)
                 duration = int(step['duration_s'])
                 if step['type'] == 'h2':
                     h2_flow = float(step['h2_flow'])
                     print(
-                        f"  步骤 {step_index}: 打开MFC1 "
-                        f"({step['concentration']}, {h2_flow:g} sccm) {duration}秒"
+                        f"  Step {step_index}: set MFC1 "
+                        f"({step['concentration']}, {h2_flow:g} sccm) {duration}s"
                     )
                     if self.mfc_controller:
                         if not self.mfc_controller.set_flow(self.mfc_controller.addresses[0], h2_flow):
-                            print("  警告: MFC1设置命令发送失败")
+                            print("  WARN MFC1 set command failed")
                     else:
                         subprocess.run(
                             [sys.executable, str(self.mfc_cli_path), 'set', '--channel', '1', '--flow', str(h2_flow)],
@@ -941,6 +1082,7 @@ class HydrogenExperimentSkill:
                         )
 
                     for second in range(duration):
+                        self._check_abort(experiment_path)
                         flow1 = self.mfc_controller.get_flow(self.mfc_controller.addresses[0]) if self.mfc_controller else h2_flow
                         flow2 = self.mfc_controller.get_flow(self.mfc_controller.addresses[1]) if self.mfc_controller else mfc2_flow
                         print(
@@ -949,11 +1091,10 @@ class HydrogenExperimentSkill:
                             end='',
                             flush=True,
                         )
-                        time.sleep(1)
+                        self._sleep_with_abort(1, experiment_path)
                     print()
                     elapsed += duration
-
-                    print("  关闭MFC1")
+                    print("  Close MFC1")
                     if self.mfc_controller:
                         self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
                     else:
@@ -963,56 +1104,60 @@ class HydrogenExperimentSkill:
                             text=True,
                         )
                 else:
-                    print(f"  步骤 {step_index}: 等待 {duration} 秒")
+                    print(f"  Step {step_index}: wait {duration} s")
                     if self.mfc_controller:
                         self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
                     for second in range(duration):
-                        print(f"\r    等待中... ({second + 1}/{duration}s)", end='', flush=True)
-                        time.sleep(1)
+                        self._check_abort(experiment_path)
+                        print(f"\r    Waiting... ({second + 1}/{duration}s)", end='', flush=True)
+                        self._sleep_with_abort(1, experiment_path)
                     print()
                     elapsed += duration
 
             remaining_time = max(0, int(total_duration) - elapsed)
             if remaining_time > 0:
-                print(f"  恢复阶段等待 {remaining_time} 秒...")
+                print(f"  Recovery wait: {remaining_time} s")
                 if self.mfc_controller:
                     self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
                 for second in range(remaining_time):
-                    print(f"\r    恢复中... ({second + 1}/{remaining_time}s)", end='', flush=True)
-                    time.sleep(1)
+                    self._check_abort(experiment_path)
+                    print(f"\r    Recovering... ({second + 1}/{remaining_time}s)", end='', flush=True)
+                    self._sleep_with_abort(1, experiment_path)
                 print()
 
             if data_process:
                 return_code = self._wait_for_data_process(data_process, timeout=15)
                 data_process = None
+                self.active_data_process = None
                 if return_code not in (0, None):
-                    print(f"  警告: 数据采集进程退出码 {return_code}")
+                    print(f"  WARN acquisition exit code {return_code}")
 
             actual_data_file = self._find_generated_csv(experiment_path, filename)
             cycle_result['data_file'] = str(actual_data_file or data_file)
             cycle_result['success'] = True
 
+        except ExperimentAborted as e:
+            print(f"\n  ABORT {e}")
+            if self.mfc_controller:
+                self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
+            cycle_result['success'] = False
+            cycle_result['aborted'] = True
+            cycle_result['error'] = str(e)
         except KeyboardInterrupt:
-            print("\n  用户中断，关闭MFC1...")
+            print("\n  Interrupted, closing MFC1...")
             if self.mfc_controller:
                 self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
             raise
         except Exception as e:
-            print(f"  循环失败: {e}")
+            print(f"  Cycle failed: {e}")
             if self.mfc_controller:
                 self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
             cycle_result['success'] = False
             cycle_result['error'] = str(e)
         finally:
             if data_process:
-                try:
-                    data_process.wait(timeout=5)
-                except Exception:
-                    try:
-                        data_process.terminate()
-                        data_process.wait(timeout=5)
-                    except Exception:
-                        data_process.kill()
+                self._terminate_data_process(data_process)
+            self.active_data_process = None
 
         cycle_result['end_time'] = datetime.now().isoformat()
         return cycle_result
@@ -1032,12 +1177,7 @@ class HydrogenExperimentSkill:
                           fbg_ip: str = DEFAULT_FBG_IP,
                           fbg_port: int = DEFAULT_FBG_PORT,
                           fbg_channel: int = DEFAULT_FBG_CHANNEL) -> Dict:
-        """
-        执行单次实验循环
-
-        返回循环结果字典
-        """
-        # 生成数据文件名：不带时间戳，包含关键实验信息和循环编号。
+        """Run one standard hydrogen cycle."""
         filename = build_experiment_file_stem(
             sensor_name=sensor_name,
             concentration=concentration,
@@ -1049,19 +1189,16 @@ class HydrogenExperimentSkill:
             fbg_channel=fbg_channel,
             cycle=cycle,
         )
-
         cycle_result = {
             'cycle': cycle,
             'filename': filename,
             'start_time': datetime.now().isoformat(),
         }
-
-        # 启动数据记录（后台进程）
         data_process = None
         data_file = experiment_path / f"{filename}.csv"
 
         try:
-            # 启动数据采集
+            self._check_abort(experiment_path)
             if instrument == "powermeter":
                 data_process = self._start_powermeter_acquisition(
                     filename=str(experiment_path / filename),
@@ -1076,33 +1213,29 @@ class HydrogenExperimentSkill:
                     fbg_port=fbg_port,
                     channel=fbg_channel
                 )
+            self.active_data_process = data_process
+            self._sleep_with_abort(1, experiment_path)
 
-            time.sleep(1)  # 等待数据采集启动
-
-            # === 执行MFC流程（使用直接连接的controller） ===
-            print(f"  打开MFC1 (H2: {h2_flow} sccm) {h2_time}秒")
+            print(f"  Set MFC1 (H2: {h2_flow} sccm) {h2_time}s")
             if self.mfc_controller:
-                # 设置MFC1流量（通氢气）
                 if not self.mfc_controller.set_flow(self.mfc_controller.addresses[0], h2_flow):
-                    print("  警告: MFC1设置命令发送失败")
+                    print("  WARN MFC1 set command failed")
             else:
-                # 回退到subprocess方式
                 subprocess.run(
                     [sys.executable, str(self.mfc_cli_path), 'set', '--channel', '1', '--flow', str(h2_flow)],
                     capture_output=True, text=True
                 )
 
-            # 实时显示MFC流量
             for i in range(h2_time):
+                self._check_abort(experiment_path)
                 flow1 = self.mfc_controller.get_flow(self.mfc_controller.addresses[0]) if self.mfc_controller else 0
                 flow2 = self.mfc_controller.get_flow(self.mfc_controller.addresses[1]) if self.mfc_controller else 0
                 print(f"\r    MFC1: {flow1:.1f} sccm | MFC2: {flow2:.3f} slm ({i+1}/{h2_time}s)",
                       end='', flush=True)
-                time.sleep(1)
+                self._sleep_with_abort(1, experiment_path)
             print()
 
-            # 关闭MFC1
-            print(f"  关闭MFC1")
+            print("  Close MFC1")
             if self.mfc_controller:
                 self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
             else:
@@ -1111,52 +1244,52 @@ class HydrogenExperimentSkill:
                     capture_output=True, text=True
                 )
 
-            # 等待数据采集完成（恢复阶段）
             remaining_time = total_duration - h2_time
             if remaining_time > 0:
-                print(f"  恢复阶段等待 {remaining_time} 秒...")
+                print(f"  Recovery wait: {remaining_time} s")
                 for i in range(remaining_time):
+                    self._check_abort(experiment_path)
                     if self.mfc_controller:
                         flow1 = self.mfc_controller.get_flow(self.mfc_controller.addresses[0])
                         flow2 = self.mfc_controller.get_flow(self.mfc_controller.addresses[1])
-                        print(f"\r    恢复中... MFC1: {flow1:.1f} sccm | MFC2: {flow2:.3f} slm ({i+1}/{remaining_time}s)",
+                        print(f"\r    Recovering... MFC1: {flow1:.1f} sccm | MFC2: {flow2:.3f} slm ({i+1}/{remaining_time}s)",
                               end='', flush=True)
                     else:
-                        print(f"\r    恢复中... ({i+1}/{remaining_time}s)", end='', flush=True)
-                    time.sleep(1)
+                        print(f"\r    Recovering... ({i+1}/{remaining_time}s)", end='', flush=True)
+                    self._sleep_with_abort(1, experiment_path)
                 print()
 
             if data_process:
                 return_code = self._wait_for_data_process(data_process, timeout=15)
                 data_process = None
+                self.active_data_process = None
                 if return_code not in (0, None):
-                    print(f"  警告: 数据采集进程退出码 {return_code}")
+                    print(f"  WARN acquisition exit code {return_code}")
 
             actual_data_file = self._find_generated_csv(experiment_path, filename)
             cycle_result['data_file'] = str(actual_data_file or data_file)
             cycle_result['success'] = True
 
+        except ExperimentAborted as e:
+            print(f"\n  ABORT {e}")
+            if self.mfc_controller:
+                self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
+            cycle_result['success'] = False
+            cycle_result['aborted'] = True
+            cycle_result['error'] = str(e)
         except KeyboardInterrupt:
-            print("\n  用户中断，关闭MFC1...")
+            print("\n  Interrupted, closing MFC1...")
             if self.mfc_controller:
                 self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
             raise
         except Exception as e:
-            print(f"  循环失败: {e}")
+            print(f"  Cycle failed: {e}")
             cycle_result['success'] = False
             cycle_result['error'] = str(e)
-
         finally:
-            # 停止数据采集
             if data_process:
-                try:
-                    data_process.wait(timeout=5)
-                except:
-                    try:
-                        data_process.terminate()
-                        data_process.wait(timeout=5)
-                    except:
-                        data_process.kill()
+                self._terminate_data_process(data_process)
+            self.active_data_process = None
 
         cycle_result['end_time'] = datetime.now().isoformat()
         return cycle_result
@@ -1222,9 +1355,9 @@ class HydrogenExperimentSkill:
                 time.sleep(0.3)
                 # 断开连接
                 self.mfc_controller.disconnect()
-                print("MFC已安全关闭并断开")
+                print("MFC closed")
             except Exception as e:
-                print(f"MFC清理异常: {e}")
+                print(f"MFC cleanup error: {e}")
         else:
             # 回退：subprocess方式
             try:
@@ -1264,11 +1397,11 @@ def run_hydrogen_experiment(request: str,
     params = parsed_params or skill.parse_experiment_request(request)
     if not params:
         return {
-            'error': '无法解析实验请求',
+            'error': 'Cannot parse request',
             'request': request
         }
 
-    print(f"\n解析的参数:")
+    print("\nParsed params:")
     for k, v in params.items():
         print(f"  {k}: {v}")
 
@@ -1359,10 +1492,10 @@ if __name__ == '__main__':
     else:
         request = "进行十次4%氢气测试，每次40秒，使用功率计测量"
 
-    print(f"实验请求: {request}\n")
+    print(f"Request: {request}\n")
     result = run_hydrogen_experiment(request)
 
     print("\n" + "=" * 60)
-    print("实验结果摘要")
+    print("Result summary")
     print("=" * 60)
     print(json.dumps(result, ensure_ascii=False, indent=2))

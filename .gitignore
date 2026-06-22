@@ -45,3 +45,6 @@ cli_tools/env_setup.sh
 *.tmp
 *.bak
 *~
+
+# Local Windows sandbox artifacts
+%SystemDrive%/

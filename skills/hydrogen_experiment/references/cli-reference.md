@@ -17,6 +17,13 @@ python cli_tools/experiment_cli.py run --output-folder "E:\experiments\2026-06-1
 python cli_tools/experiment_cli.py run --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --instrument fbg --loop-count 5 --step h2:3:20 --step wait:10 --step h2:2:30 --dry-run
 ```
 
+
+立即请求结束正在运行的实验，并关闭 MFC1 氢气：
+
+```bash
+python cli_tools/experiment_cli.py stop --reason "User requested stop"
+python cli_tools/experiment_cli.py stop --mfc-port COM3 --reason "User requested stop"
+```
 常用参数：
 - `--output-folder`：实验数据文件夹；省略时沿用上次实验数据文件夹。
 - `--mfc-port`：用户确认的 MFC 串口，必填。
@@ -53,6 +60,13 @@ python analysis/analyze_sensor_response.py analyze cycle01.csv cycle02.csv cycle
 python analysis/analyze_sensor_response.py analyze cycle01.csv --output sensor_A_H2-3percent_cycle01_response.json
 ```
 
+
+立即请求结束正在运行的实验，并关闭 MFC1 氢气：
+
+```bash
+python cli_tools/experiment_cli.py stop --reason "User requested stop"
+python cli_tools/experiment_cli.py stop --mfc-port COM3 --reason "User requested stop"
+```
 常用参数：
 - `--json`：只向标准输出打印 JSON，便于 agent 解析。
 - `--output`：保存分析 JSON。

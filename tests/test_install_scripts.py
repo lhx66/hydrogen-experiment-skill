@@ -27,7 +27,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("git fetch origin main", installer)
         self.assertIn("set \"SKILLS_DIR=%PROJECT_DIR%\\skills\\%SKILL_DIR_NAME%\"", installer)
         self.assertIn("%USERPROFILE%\\.codex\\commands", installer)
-        self.assertIn("注册 Codex 斜杠命令", installer)
+        self.assertIn("Codex slash command", installer)
         self.assertIn(":cleanup_old_skill", installer)
         self.assertIn("%USERPROFILE%\\.codex\\skills\\hydrogen_experiment", installer)
         self.assertIn("%USERPROFILE%\\.codex\\commands\\hydrogen_experiment.md", installer)
