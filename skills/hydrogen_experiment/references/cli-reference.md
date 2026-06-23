@@ -33,7 +33,8 @@ python cli_tools/experiment_cli.py stop --mfc-port COM3 --reason "User requested
 - `--step h2:<percent>:<duration_s>`：通氢步骤，可重复。例如 `--step h2:3:20`。
 - `--step wait:<duration_s>`：关闭 MFC1 后等待，可穿插在多个通氢步骤之间。
 - `--mfc2-flow`：MFC2 载气流量，默认 1.0 slm。
-- `--total-duration`：每轮记录总时长，默认全部 `--step` 时长总和 + 30 s；不能短于步骤总时长。
+- `--total-duration`：每轮记录总时长，默认全部 `--step` 时长总和 + 30 s；开始记录后默认等待 2 s 再打开 MFC1，且这 2 s 包含在 `--total-duration` 内；不能短于 2 s 预记录 + 步骤总时长。
+- `--pre-h2-delay`：开始记录后到打开 MFC1 氢气前的等待时间，默认 2 s；包含在 `--total-duration` 内。
 - `--loop-interval`：循环间隔，默认 60 s。
 - `--fbg-channel`：FBG 通道，默认 1。
 - `--dry-run`：只打印计划，不连接硬件。

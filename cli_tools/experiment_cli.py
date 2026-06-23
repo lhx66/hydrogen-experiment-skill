@@ -23,6 +23,7 @@ from hydrogen_experiment import (  # noqa: E402
     DEFAULT_FBG_PORT,
     DEFAULT_MFC2_FLOW_SLM,
     DEFAULT_POWERMETER_RESOURCE,
+    DEFAULT_PRE_H2_DELAY_S,
     STOP_REQUEST_FILENAME,
     HIGH_CONCENTRATION_AUTH_LIMIT_PERCENT,
     calculate_flow_sequence_duration,
@@ -163,9 +164,11 @@ def _build_steps(flow_steps: List[Dict],
                  total_duration: int,
                  mfc_port: str,
                  instrument: str,
-                 mfc2_flow: float) -> List[Dict]:
+                 mfc2_flow: float,
+                 pre_h2_delay: int = DEFAULT_PRE_H2_DELAY_S) -> List[Dict]:
     sequence_duration = calculate_flow_sequence_duration(flow_steps)
-    recovery_time = max(0, int(total_duration) - sequence_duration)
+    pre_h2_delay = int(pre_h2_delay)
+    recovery_time = max(0, int(total_duration) - pre_h2_delay - sequence_duration)
     steps = [
         {"phase": "connect_devices", "action": "connect_mfc", "target": mfc_port},
         {
@@ -178,6 +181,8 @@ def _build_steps(flow_steps: List[Dict],
         {"phase": "stabilize_carrier", "action": "wait_mfc2_stable", "duration_s": DEFAULT_MFC2_STABILIZE_TIME},
         {"phase": "record_data", "action": "start_recording", "duration_s": total_duration, "instrument": instrument},
     ]
+    if pre_h2_delay > 0:
+        steps.append({"phase": "record_data", "action": "wait_before_h2", "duration_s": pre_h2_delay})
 
     for flow_step in flow_steps:
         if flow_step["type"] == "h2":
@@ -224,13 +229,15 @@ def build_run_plan(
     fbg_channel: int = DEFAULT_FBG_CHANNEL,
     high_concentration_authorized: bool = False,
     save_artifacts: bool = False,
+    pre_h2_delay: int = DEFAULT_PRE_H2_DELAY_S,
 ) -> Dict:
     flow_steps = normalize_flow_steps(flow_steps, mfc2_flow=mfc2_flow)
     sequence_duration = calculate_flow_sequence_duration(flow_steps)
+    pre_h2_delay = int(pre_h2_delay)
     if total_duration is None:
         total_duration = sequence_duration + DEFAULT_RECOVERY_TIME
-    if int(total_duration) < sequence_duration:
-        raise ValueError("total_duration must be greater than or equal to the flow sequence duration")
+    if int(total_duration) < pre_h2_delay + sequence_duration:
+        raise ValueError("total_duration must be greater than or equal to pre_h2_delay plus the flow sequence duration")
 
     max_concentration = max_flow_sequence_concentration(flow_steps)
     safety_blocked = (
@@ -246,6 +253,7 @@ def build_run_plan(
         "flow_steps": flow_steps,
         "sequence_duration": sequence_duration,
         "total_duration": int(total_duration),
+        "pre_h2_delay": pre_h2_delay,
         "loop_interval": int(loop_interval),
         "instrument": instrument,
         "mfc_port": mfc_port,
@@ -259,7 +267,7 @@ def build_run_plan(
         "save_artifacts": bool(save_artifacts),
         "safety_blocked": safety_blocked,
     }
-    plan["steps"] = _build_steps(flow_steps, int(total_duration), mfc_port, instrument, float(mfc2_flow))
+    plan["steps"] = _build_steps(flow_steps, int(total_duration), mfc_port, instrument, float(mfc2_flow), pre_h2_delay)
     return plan
 
 
@@ -283,6 +291,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--mfc2-flow", type=float, default=DEFAULT_MFC2_FLOW_SLM, help="MFC2 carrier flow in slm")
     run_parser.add_argument("--total-duration", type=int, help="Recording duration per cycle in seconds")
+    run_parser.add_argument("--pre-h2-delay", type=int, default=DEFAULT_PRE_H2_DELAY_S, help="Delay after recording starts before opening H2")
     run_parser.add_argument("--loop-interval", type=int, default=60, help="Interval between cycles in seconds")
     run_parser.add_argument("--fbg-channel", type=int, default=DEFAULT_FBG_CHANNEL, help="FBG channel")
     run_parser.add_argument("--authorize-high-concentration", action="store_true")
@@ -338,6 +347,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             fbg_channel=args.fbg_channel,
             high_concentration_authorized=args.authorize_high_concentration,
             save_artifacts=args.save_artifacts,
+            pre_h2_delay=args.pre_h2_delay,
         )
     except ValueError as e:
         parser.error(str(e))
@@ -370,6 +380,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         fbg_channel=args.fbg_channel,
         high_concentration_authorized=args.authorize_high_concentration,
         save_artifacts=args.save_artifacts,
+        pre_h2_delay=plan["pre_h2_delay"],
     )
     _json_print(result)
     return 0 if result.get("overall_success") else 1

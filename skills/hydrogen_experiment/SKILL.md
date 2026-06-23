@@ -73,9 +73,11 @@ python cli_tools/experiment_cli.py run --output-folder "E:\experiments\2026-06-1
 
 ### 阶段4：单轮循环执行
 
-每轮由总程序按顺序完成：连接或检查设备，打开 MFC2 载气并等待稳定，先启动 FBG 或功率计采集，然后按 `flow_steps` 顺序执行通氢和等待步骤。`h2` 步骤会设置 MFC1 流量并保持指定秒数，随后关闭 MFC1；`wait` 步骤保持 MFC1 关闭并等待指定秒数。
+每轮由总程序按顺序完成：连接或检查设备，打开 MFC2 载气并等待稳定，先启动 FBG 或功率计采集，开始记录数据后默认等待 2 s 再打开 MFC1 氢气，然后按 `flow_steps` 顺序执行通氢和等待步骤。这个 2 s 预记录时间包含在本轮 `total_duration` 记录总时长内，不额外延长用户要求的记录时长。`h2` 步骤会设置 MFC1 流量并保持指定秒数，随后关闭 MFC1；`wait` 步骤保持 MFC1 关闭并等待指定秒数。
 
-全部 `flow_steps` 执行完后，继续记录恢复段直到本轮记录总时长结束。不要在 MFC2 未打开或未稳定时打开 MFC1。总程序完成每轮后，它会在实验 JSON 中列出每轮 CSV 文件路径，供后续分析和绘图使用。
+全部 `flow_steps` 执行完后，继续记录恢复段直到本轮记录总时长结束。不要在 MFC2 未打开或未稳定时打开 MFC1。**MFC2 稳定后再启用运行期低流量监控**；稳定完成后如果 MFC2 仍低于 0.1 slm，总程序必须关闭 MFC1 并终止实验流程。总程序完成每轮后，它会在实验 JSON 中列出每轮 CSV 文件路径，供后续分析和绘图使用。
+
+总程序会在每轮开始打印 `Progress: cycle {n}/{total} start`，并在每轮结束打印 `Progress: cycle {n}/{total} done status=ok data_file=<csv>`。失败或中止时 `status` 为 `failed` 或 `aborted`，并带 `error=<reason>`。agent 看到每轮 `done` 行后，立即用该 `data_file` 调用分析脚本，并在 agent 窗口简短打印当前循环进度和分析结果。
 
 ### 阶段5：单轮数据分析
 

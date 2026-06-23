@@ -52,6 +52,7 @@ DEFAULT_FBG_IP = '192.168.1.1'
 DEFAULT_FBG_PORT = 1000
 DEFAULT_FBG_CHANNEL = 1
 DEFAULT_POWERMETER_RESOURCE = 'TCPIP0::192.169.1.102::inst0::INSTR'
+DEFAULT_PRE_H2_DELAY_S = 2
 HIGH_CONCENTRATION_AUTH_LIMIT_PERCENT = 4.0
 STOP_REQUEST_FILENAME = '.hydrogen_experiment_stop.json'
 
@@ -447,6 +448,26 @@ class HydrogenExperimentSkill:
             except Exception:
                 pass
 
+    def _print_cycle_done(self,
+                          cycle: int,
+                          loop_count: int,
+                          cycle_result: Dict) -> None:
+        if cycle_result.get('aborted'):
+            status = 'aborted'
+        elif cycle_result.get('success'):
+            status = 'ok'
+        else:
+            status = 'failed'
+
+        parts = [f"Progress: cycle {cycle}/{loop_count} done status={status}"]
+        data_file = cycle_result.get('data_file')
+        if data_file:
+            parts.append(f"data_file={data_file}")
+        error = cycle_result.get('error')
+        if error:
+            parts.append(f"error={error}")
+        print(' '.join(parts), flush=True)
+
     def parse_experiment_request(self, request: str) -> Optional[Dict]:
         """
         解析用户的实验请求
@@ -564,7 +585,8 @@ class HydrogenExperimentSkill:
                       fbg_port: int = DEFAULT_FBG_PORT,
                       fbg_channel: int = DEFAULT_FBG_CHANNEL,
                       high_concentration_authorized: bool = False,
-                      save_artifacts: bool = False) -> Dict:
+                      save_artifacts: bool = False,
+                      pre_h2_delay: int = DEFAULT_PRE_H2_DELAY_S) -> Dict:
         """
         运行一次完整实验
 
@@ -593,7 +615,7 @@ class HydrogenExperimentSkill:
 
         # 计算总记录时长
         if total_duration is None:
-            total_duration = h2_time + 30  # 默认：通氢时间 + 30秒恢复
+            total_duration = h2_time + 30  # 默认记录时长包含预记录、通氢和恢复
 
         # 创建实验目录。目录不再追加时间戳，日期通常由用户指定的父文件夹承载。
         experiment_name = build_experiment_file_stem(
@@ -630,6 +652,7 @@ class HydrogenExperimentSkill:
             'mfc2_flow': mfc2_flow,
             'h2_time': h2_time,
             'total_duration': total_duration,
+            'pre_h2_delay': int(pre_h2_delay),
             'loop_count': loop_count,
             'instrument': instrument,
             'fbg_channel': fbg_channel if instrument == 'fbg' else None,
@@ -674,7 +697,7 @@ class HydrogenExperimentSkill:
             for cycle in range(1, loop_count + 1):
                 self._check_abort(experiment_path)
                 print(f"\n--- Cycle {cycle}/{loop_count} ---")
-                print(f"Progress: cycle {cycle}/{loop_count} start")
+                print(f"Progress: cycle {cycle}/{loop_count} start", flush=True)
 
                 cycle_result = self._run_single_cycle(
                     cycle=cycle,
@@ -690,19 +713,22 @@ class HydrogenExperimentSkill:
                     powermeter_resource=powermeter_resource,
                     fbg_ip=fbg_ip,
                     fbg_port=fbg_port,
-                    fbg_channel=fbg_channel
+                    fbg_channel=fbg_channel,
+                    pre_h2_delay=int(pre_h2_delay)
                 )
 
                 results['cycles'].append(cycle_result)
+                if cycle_result.get('data_file'):
+                    self.cycle_plots.append((cycle, cycle_result['data_file']))
+                    print(f"  OK CSV: {cycle_result['data_file']}")
+                self._print_cycle_done(cycle, loop_count, cycle_result)
+
                 if cycle_result.get('aborted'):
                     results['aborted'] = True
                     results['error'] = cycle_result.get('error', 'Experiment aborted')
                     break
 
                 # 实验程序只负责产出CSV；分析和绘图由agent调用独立脚本完成。
-                if cycle_result.get('data_file'):
-                    self.cycle_plots.append((cycle, cycle_result['data_file']))
-                    print(f"  OK CSV: {cycle_result['data_file']}")
 
                 # 循环间隔（非最后一次循环时等待）
                 if cycle < loop_count:
@@ -755,7 +781,8 @@ class HydrogenExperimentSkill:
                                 fbg_port: int = DEFAULT_FBG_PORT,
                                 fbg_channel: int = DEFAULT_FBG_CHANNEL,
                                 high_concentration_authorized: bool = False,
-                                save_artifacts: bool = False) -> Dict:
+                                save_artifacts: bool = False,
+                                pre_h2_delay: int = DEFAULT_PRE_H2_DELAY_S) -> Dict:
         """Run a parameterized experiment with h2/wait flow steps."""
         try:
             flow_steps = normalize_flow_steps(flow_steps, mfc2_flow)
@@ -792,6 +819,7 @@ class HydrogenExperimentSkill:
             'mfc2_flow': mfc2_flow,
             'sequence_duration': sequence_duration,
             'total_duration': total_duration,
+            'pre_h2_delay': int(pre_h2_delay),
             'loop_count': loop_count,
             'instrument': instrument,
             'fbg_channel': fbg_channel if instrument == 'fbg' else None,
@@ -813,8 +841,8 @@ class HydrogenExperimentSkill:
             print(f"SAFETY BLOCK: {e}")
             return results
 
-        if int(total_duration) < sequence_duration:
-            results['error'] = 'total_duration must be >= flow sequence duration'
+        if int(total_duration) < sequence_duration + int(pre_h2_delay):
+            results['error'] = 'total_duration must be >= pre_h2_delay + flow sequence duration'
             print(f"FAIL {results['error']}")
             return results
 
@@ -841,7 +869,7 @@ class HydrogenExperimentSkill:
             for cycle in range(1, loop_count + 1):
                 self._check_abort(experiment_path)
                 print(f"\n--- Cycle {cycle}/{loop_count} ---")
-                print(f"Progress: cycle {cycle}/{loop_count} start")
+                print(f"Progress: cycle {cycle}/{loop_count} start", flush=True)
                 cycle_result = self._run_sequence_cycle(
                     cycle=cycle,
                     experiment_path=experiment_path,
@@ -854,15 +882,18 @@ class HydrogenExperimentSkill:
                     fbg_ip=fbg_ip,
                     fbg_port=fbg_port,
                     fbg_channel=fbg_channel,
+                    pre_h2_delay=int(pre_h2_delay),
                 )
                 results['cycles'].append(cycle_result)
+                if cycle_result.get('data_file'):
+                    self.cycle_plots.append((cycle, cycle_result['data_file']))
+                    print(f"  OK CSV: {cycle_result['data_file']}")
+                self._print_cycle_done(cycle, loop_count, cycle_result)
+
                 if cycle_result.get('aborted'):
                     results['aborted'] = True
                     results['error'] = cycle_result.get('error', 'Experiment aborted')
                     break
-                if cycle_result.get('data_file'):
-                    self.cycle_plots.append((cycle, cycle_result['data_file']))
-                    print(f"  OK CSV: {cycle_result['data_file']}")
 
                 if cycle < loop_count:
                     print(f"  Wait interval: {loop_interval} s")
@@ -956,25 +987,55 @@ class HydrogenExperimentSkill:
 
             if hasattr(self.mfc_controller, 'set_safety_callback'):
                 self.mfc_controller.set_safety_callback(self._handle_mfc_safety_stop)
-
-            # 启动流量监控
-            self.mfc_controller.start_monitoring(interval=0.5)
+            if hasattr(self.mfc_controller, 'set_safety_enabled'):
+                self.mfc_controller.set_safety_enabled(False)
+            if hasattr(self.mfc_controller, 'clear_stop_request'):
+                self.mfc_controller.clear_stop_request()
+            self.stop_requested = False
+            self.stop_reason = None
 
             # 初始化数字控制模式
             self.mfc_controller.init_mfc_mode()
 
-            # 先打开MFC2载气并等待稳定
+            # 先打开MFC2载气并等待稳定；稳定前不要启动低流量安全监控。
             print(f"Set MFC2 carrier: {mfc2_flow} slm")
             if not self.mfc_controller.set_flow(self.mfc_controller.addresses[1], mfc2_flow):
                 print("WARN MFC2 set failed; continuing")
 
-            # 等待MFC2稳定
             print("Wait MFC2 stable (5 s)...")
+            flow2 = None
             for i in range(5):
-                flow2 = self.mfc_controller.get_flow(self.mfc_controller.addresses[1])
-                print(f"\r  MFC2: {flow2:.3f} slm ({i+1}/5s)", end='', flush=True)
+                flow2 = None
+                if hasattr(self.mfc_controller, 'read_flow'):
+                    try:
+                        flow2 = self.mfc_controller.read_flow(self.mfc_controller.addresses[1])
+                    except Exception:
+                        flow2 = None
+                if flow2 is None and hasattr(self.mfc_controller, 'get_flow'):
+                    try:
+                        flow2 = self.mfc_controller.get_flow(self.mfc_controller.addresses[1])
+                    except Exception:
+                        flow2 = None
+                flow_text = f"{flow2:.3f}" if flow2 is not None else "N/A"
+                print(f"\r  MFC2: {flow_text} slm ({i+1}/5s)", end="", flush=True)
                 time.sleep(1)
             print()
+
+            threshold = getattr(self.mfc_controller, 'mfc2_threshold', 0.1)
+            if flow2 is not None and flow2 < threshold:
+                self.request_stop(f"MFC2 flow low: {flow2:.3f} slm")
+                print(f"ERROR MFC2 flow low after stabilize: {flow2:.3f} slm")
+                return False
+
+            if hasattr(self.mfc_controller, 'clear_stop_request'):
+                self.mfc_controller.clear_stop_request()
+            self.stop_requested = False
+            self.stop_reason = None
+            if hasattr(self.mfc_controller, 'set_safety_enabled'):
+                self.mfc_controller.set_safety_enabled(True)
+
+            # 启动运行期流量监控。此时 MFC2 已经完成初始稳定。
+            self.mfc_controller.start_monitoring(interval=0.5)
             print("OK MFC ready")
             return True
 
@@ -1022,7 +1083,8 @@ class HydrogenExperimentSkill:
                             powermeter_resource: str = DEFAULT_POWERMETER_RESOURCE,
                             fbg_ip: str = DEFAULT_FBG_IP,
                             fbg_port: int = DEFAULT_FBG_PORT,
-                            fbg_channel: int = DEFAULT_FBG_CHANNEL) -> Dict:
+                            fbg_channel: int = DEFAULT_FBG_CHANNEL,
+                            pre_h2_delay: int = DEFAULT_PRE_H2_DELAY_S) -> Dict:
         """Run one parameterized flow cycle."""
         filename = build_sequence_file_stem(
             sensor_name=sensor_name,
@@ -1059,9 +1121,9 @@ class HydrogenExperimentSkill:
                     channel=fbg_channel,
                 )
             self.active_data_process = data_process
-            self._sleep_with_abort(1, experiment_path)
+            self._sleep_with_abort(int(pre_h2_delay), experiment_path)
 
-            elapsed = 0
+            elapsed = int(pre_h2_delay)
             for step_index, step in enumerate(flow_steps, start=1):
                 self._check_abort(experiment_path)
                 duration = int(step['duration_s'])
@@ -1176,7 +1238,8 @@ class HydrogenExperimentSkill:
                           powermeter_resource: str = DEFAULT_POWERMETER_RESOURCE,
                           fbg_ip: str = DEFAULT_FBG_IP,
                           fbg_port: int = DEFAULT_FBG_PORT,
-                          fbg_channel: int = DEFAULT_FBG_CHANNEL) -> Dict:
+                          fbg_channel: int = DEFAULT_FBG_CHANNEL,
+                          pre_h2_delay: int = DEFAULT_PRE_H2_DELAY_S) -> Dict:
         """Run one standard hydrogen cycle."""
         filename = build_experiment_file_stem(
             sensor_name=sensor_name,
@@ -1214,7 +1277,7 @@ class HydrogenExperimentSkill:
                     channel=fbg_channel
                 )
             self.active_data_process = data_process
-            self._sleep_with_abort(1, experiment_path)
+            self._sleep_with_abort(int(pre_h2_delay), experiment_path)
 
             print(f"  Set MFC1 (H2: {h2_flow} sccm) {h2_time}s")
             if self.mfc_controller:
@@ -1244,7 +1307,7 @@ class HydrogenExperimentSkill:
                     capture_output=True, text=True
                 )
 
-            remaining_time = total_duration - h2_time
+            remaining_time = total_duration - int(pre_h2_delay) - h2_time
             if remaining_time > 0:
                 print(f"  Recovery wait: {remaining_time} s")
                 for i in range(remaining_time):
@@ -1358,6 +1421,8 @@ class HydrogenExperimentSkill:
                 print("MFC closed")
             except Exception as e:
                 print(f"MFC cleanup error: {e}")
+            finally:
+                self.mfc_controller = None
         else:
             # 回退：subprocess方式
             try:
@@ -1379,7 +1444,8 @@ def run_hydrogen_experiment(request: str,
                             fbg_channel: int = DEFAULT_FBG_CHANNEL,
                             high_concentration_authorized: bool = False,
                             save_artifacts: bool = False,
-                            parsed_params: Optional[Dict] = None) -> Dict:
+                            parsed_params: Optional[Dict] = None,
+                            pre_h2_delay: int = DEFAULT_PRE_H2_DELAY_S) -> Dict:
     """
     运行氢气实验（主入口函数）
 
@@ -1422,6 +1488,7 @@ def run_hydrogen_experiment(request: str,
         fbg_channel=fbg_channel,
         high_concentration_authorized=high_concentration_authorized,
         save_artifacts=save_artifacts,
+        pre_h2_delay=int(pre_h2_delay),
     )
 
     return result
@@ -1441,7 +1508,8 @@ def run_parameterized_hydrogen_experiment(output_folder: Optional[str],
                                           fbg_port: int = DEFAULT_FBG_PORT,
                                           fbg_channel: int = DEFAULT_FBG_CHANNEL,
                                           high_concentration_authorized: bool = False,
-                                          save_artifacts: bool = False) -> Dict:
+                                          save_artifacts: bool = False,
+                                          pre_h2_delay: int = DEFAULT_PRE_H2_DELAY_S) -> Dict:
     """Run a parameterized hydrogen experiment without natural-language parsing."""
     skill = HydrogenExperimentSkill(output_folder=output_folder)
     return skill.run_sequence_experiment(
@@ -1459,6 +1527,7 @@ def run_parameterized_hydrogen_experiment(output_folder: Optional[str],
         fbg_channel=fbg_channel,
         high_concentration_authorized=high_concentration_authorized,
         save_artifacts=save_artifacts,
+        pre_h2_delay=int(pre_h2_delay),
     )
 
 

@@ -175,8 +175,203 @@ class HydrogenExperimentFlowTests(unittest.TestCase):
 
         output = stdout.getvalue()
         self.assertIn("Progress: cycle 1/2 start", output)
+        self.assertIn("Progress: cycle 1/2 done status=ok", output)
+        self.assertIn("data_file=", output)
         self.assertIn("Progress: cycle 2/2 start", output)
+        self.assertIn("Progress: cycle 2/2 done status=ok", output)
 
+    def test_standard_experiment_prints_done_progress_for_each_cycle(self):
+        output_dir = ROOT / "tmp_test_output" / "sync_standard_progress"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
+        skill = self.module.HydrogenExperimentSkill(output_folder=str(output_dir))
+
+        stdout = io.StringIO()
+        with patch.object(skill, "_connect_mfc_direct", return_value=True), \
+             patch.object(skill, "_connect_fbg", return_value=True), \
+             patch.object(skill, "_run_single_cycle", return_value={
+                 "cycle": 1,
+                 "data_file": str(output_dir / "cycle.csv"),
+                 "success": True,
+             }), \
+             patch.object(skill, "_cleanup"), \
+             redirect_stdout(stdout):
+            skill.run_experiment(
+                sensor_name="sensor_A",
+                concentration="3%",
+                h2_time=1,
+                loop_count=1,
+                instrument="fbg",
+                total_duration=2,
+                loop_interval=0,
+            )
+
+        output = stdout.getvalue()
+        self.assertIn("Progress: cycle 1/1 start", output)
+        self.assertIn("Progress: cycle 1/1 done status=ok", output)
+        self.assertIn("data_file=", output)
+
+    def test_mfc_startup_carrier_ramp_does_not_leave_stop_requested(self):
+        skill = self.module.HydrogenExperimentSkill(output_folder=str(ROOT / "tmp_test_output"))
+
+        class StartupSensitiveMfc:
+            addresses = [1, 2]
+
+            def __init__(self):
+                self.calls = []
+                self.carrier_set = False
+                self.stop_requested = False
+                self.stop_reason = None
+                self.safety_callback = None
+
+            def connect(self, port, baudrate=9600):
+                self.calls.append(("connect", port, baudrate))
+                return True
+
+            def set_safety_callback(self, callback):
+                self.safety_callback = callback
+
+            def start_monitoring(self, interval=0.5):
+                self.calls.append(("start_monitoring", interval))
+                if not self.carrier_set:
+                    self.stop_requested = True
+                    self.stop_reason = "MFC2 flow low: 0.000 slm"
+                    if self.safety_callback:
+                        self.safety_callback("mfc2_low", 0.0)
+
+            def init_mfc_mode(self):
+                self.calls.append(("init_mfc_mode",))
+                return True
+
+            def set_flow(self, address, value):
+                self.calls.append(("set_flow", address, value))
+                if address == self.addresses[1] and value > 0:
+                    self.carrier_set = True
+                return True
+
+            def get_flow(self, address):
+                return 1.0 if address == self.addresses[1] and self.carrier_set else 0.0
+
+            def read_flow(self, address):
+                return self.get_flow(address)
+
+            def clear_stop_request(self):
+                self.stop_requested = False
+                self.stop_reason = None
+
+        with patch.object(self.module, "MFCController", StartupSensitiveMfc), \
+             patch.object(self.module.time, "sleep"), \
+             redirect_stdout(io.StringIO()):
+            connected = skill._connect_mfc_direct("COM7", mfc2_flow=1.0)
+
+        self.assertTrue(connected)
+        self.assertFalse(skill.stop_requested)
+        self.assertFalse(skill.mfc_controller.stop_requested)
+        self.assertLess(
+            skill.mfc_controller.calls.index(("set_flow", 2, 1.0)),
+            skill.mfc_controller.calls.index(("start_monitoring", 0.5)),
+        )
+
+    def test_sequence_cycle_waits_two_seconds_after_recording_before_hydrogen(self):
+        output_dir = ROOT / "tmp_test_output" / "sync_pre_h2_delay"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
+        skill = self.module.HydrogenExperimentSkill(output_folder=str(output_dir))
+        flow_steps = self.module.normalize_flow_steps([
+            {"type": "h2", "concentration": "3%", "duration_s": 1},
+        ])
+
+        class FakeMfc:
+            addresses = [1, 2]
+
+            def __init__(self):
+                self.commands = []
+
+            def set_flow(self, address, value):
+                self.commands.append((address, value))
+                return True
+
+            def get_flow(self, address):
+                return 1.0 if address == 2 else 0.0
+
+        class FakeProcess:
+            def wait(self, timeout=None):
+                return 0
+
+            def poll(self):
+                return 0
+
+        delays = []
+        skill.mfc_controller = FakeMfc()
+
+        with patch.object(skill, "_start_fbg_acquisition", return_value=FakeProcess()), \
+             patch.object(skill, "_sleep_with_abort", side_effect=lambda duration, path=None: delays.append(duration)), \
+             redirect_stdout(io.StringIO()):
+            result = skill._run_sequence_cycle(
+                cycle=1,
+                experiment_path=output_dir,
+                sensor_name="sensor_A",
+                flow_steps=flow_steps,
+                total_duration=3,
+                mfc2_flow=1.0,
+                instrument="fbg",
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(delays[0], 2)
+        self.assertIn((1, 30.0), skill.mfc_controller.commands)
+
+    def test_standard_cycle_waits_two_seconds_after_recording_before_hydrogen(self):
+        output_dir = ROOT / "tmp_test_output" / "sync_standard_pre_h2_delay"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
+        skill = self.module.HydrogenExperimentSkill(output_folder=str(output_dir))
+
+        class FakeMfc:
+            addresses = [1, 2]
+
+            def __init__(self):
+                self.commands = []
+
+            def set_flow(self, address, value):
+                self.commands.append((address, value))
+                return True
+
+            def get_flow(self, address):
+                return 1.0 if address == 2 else 0.0
+
+        class FakeProcess:
+            def wait(self, timeout=None):
+                return 0
+
+            def poll(self):
+                return 0
+
+        delays = []
+        skill.mfc_controller = FakeMfc()
+
+        with patch.object(skill, "_start_fbg_acquisition", return_value=FakeProcess()), \
+             patch.object(skill, "_sleep_with_abort", side_effect=lambda duration, path=None: delays.append(duration)), \
+             redirect_stdout(io.StringIO()):
+            result = skill._run_single_cycle(
+                cycle=1,
+                experiment_path=output_dir,
+                sensor_name="sensor_A",
+                concentration="3%",
+                h2_time=1,
+                total_duration=3,
+                h2_flow=30.0,
+                mfc2_flow=1.0,
+                instrument="fbg",
+                loop_interval=0,
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(delays[0], 2)
+        self.assertIn((1, 30.0), skill.mfc_controller.commands)
     def test_sequence_cycle_aborts_when_user_requests_stop(self):
         output_dir = ROOT / "tmp_test_output" / "sync_user_stop"
         if output_dir.exists():
@@ -231,7 +426,7 @@ class HydrogenExperimentFlowTests(unittest.TestCase):
 
         def fake_sleep(seconds):
             sleep_count["value"] += 1
-            if sleep_count["value"] == 2:
+            if sleep_count["value"] == 3:
                 skill.request_stop("User requested stop")
 
         with patch.object(skill, "_start_fbg_acquisition", return_value=fake_process), \

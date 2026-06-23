@@ -110,6 +110,10 @@ class SkillDocumentationTests(unittest.TestCase):
             "不要向用户询问 FBG 解调仪地址、FBG 端口或功率计地址",
             "agent 负责理解用户自然语言并转换为参数；`experiment_cli.py` 不接受自然语言位置参数",
             "按顺序执行所有 `--step`",
+            "开始记录数据后默认等待 2 s 再打开 MFC1 氢气",
+            "MFC2 稳定后再启用运行期低流量监控",
+            "Progress: cycle {n}/{total} done status=ok data_file=<csv>",
+            "Progress: cycle {n}/{total} start",
             "它会在实验 JSON 中列出每轮 CSV 文件路径",
         ]
 

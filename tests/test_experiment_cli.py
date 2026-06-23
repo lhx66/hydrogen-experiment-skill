@@ -67,6 +67,8 @@ class ExperimentCliTests(unittest.TestCase):
         self.assertEqual(plan["fbg_port"], 1000)
         self.assertEqual(plan["powermeter_resource"], "TCPIP0::192.169.1.102::inst0::INSTR")
         self.assertEqual(plan["mfc2_flow"], 1.0)
+        self.assertEqual(plan["pre_h2_delay"], 2)
+        self.assertEqual(plan["total_duration"], 50)
         self.assertEqual(plan["flow_steps"][0]["h2_flow"], 30.0)
         self.assertEqual(
             [step["action"] for step in plan["steps"]],
@@ -76,6 +78,7 @@ class ExperimentCliTests(unittest.TestCase):
                 "set_mfc2_flow",
                 "wait_mfc2_stable",
                 "start_recording",
+                "wait_before_h2",
                 "set_mfc1_flow",
                 "wait_h2",
                 "close_mfc1",
@@ -91,6 +94,7 @@ class ExperimentCliTests(unittest.TestCase):
                 "connect_devices",
                 "open_carrier",
                 "stabilize_carrier",
+                "record_data",
                 "record_data",
                 "run_user_flow",
                 "run_user_flow",
@@ -205,6 +209,7 @@ class ExperimentCliTests(unittest.TestCase):
         self.assertEqual(kwargs["mfc_port"], "COM7")
         self.assertEqual(kwargs["sensor_name"], "sensor_A")
         self.assertEqual(kwargs["flow_steps"][0]["concentration"], "3%")
+        self.assertEqual(kwargs["pre_h2_delay"], 2)
         self.assertTrue(kwargs["high_concentration_authorized"])
         self.assertTrue(kwargs["save_artifacts"])
 

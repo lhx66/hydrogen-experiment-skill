@@ -16,7 +16,7 @@
 python cli_tools\experiment_cli.py run --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --instrument powermeter --loop-count 10 --step h2:4:40 --dry-run
 ```
 
-确认后去掉 `--dry-run` 正式运行。总程序会负责连接设备、打开 MFC2 载气、等待稳定、启动数据记录、执行用户要求的通氢流程、恢复和清理，并输出每轮 CSV 路径。分析和绘图由 agent 单独调用 `analysis/` 下的脚本。
+确认后去掉 `--dry-run` 正式运行。总程序会负责连接设备、打开 MFC2 载气、等待稳定、启动数据记录、默认预记录 2 秒后打开 MFC1 氢气、执行用户要求的通氢流程、恢复和清理，并输出每轮 CSV 路径。2 秒预记录包含在每轮记录总时长内，不会额外延长用户要求的记录时长。分析和绘图由 agent 单独调用 `analysis/` 下的脚本。
 
 如果用户未要求更换数据文件夹，后续命令可以省略 `--output-folder`，总程序会沿用上次实验数据文件夹。
 
