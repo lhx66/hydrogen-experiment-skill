@@ -150,7 +150,8 @@ class DataLogger(Thread):
 
     def run(self):
         """记录循环"""
-        start_time = time.time()
+        start_time = None  # 将在第一个数据点成功记录时设置
+        thread_start_time = time.time()  # 线程启动时间，用于超时检测
 
         # 打开文件
         try:
@@ -164,14 +165,20 @@ class DataLogger(Thread):
 
         try:
             while not self.stop_event.is_set():
-                # 检查时长
-                if self.duration > 0:
+                # 检查时长（使用实际开始时间计算）
+                if start_time and self.duration > 0:
                     elapsed = time.time() - start_time
                     if elapsed >= self.duration:
                         break
+                elif self.duration > 0:
+                    # 尚未开始记录，检查等待超时
+                    if time.time() - thread_start_time > 30:
+                        print("WARN No data received within 30s, stopping")
+                        break
+                    time.sleep(0.1)
+                    continue
 
                 t0 = time.time()
-                elapsed = t0 - start_time
 
                 # 读取数据
                 try:
@@ -179,6 +186,17 @@ class DataLogger(Thread):
                 except Exception as e:
                     print(f"\nRead error: {e}")
                     v1, v2, v3, v4 = None, None, None, None
+
+                # 第一个成功数据点时设置开始时间
+                if start_time is None and (v1 is not None or v2 is not None or v3 is not None or v4 is not None):
+                    start_time = t0
+                    elapsed = 0
+                elif start_time is not None:
+                    elapsed = t0 - start_time
+                else:
+                    # 尚未成功读取数据，跳过本次记录
+                    time.sleep(self.interval)
+                    continue
 
                 # 写入CSV
                 row = [

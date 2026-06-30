@@ -97,20 +97,18 @@ class FBGDemodulator:
 
             self.recv_buffer += self.socket.recv(4096)
 
+            # 同步机制：查找同步模式
             if not self.synced and len(self.recv_buffer) >= 20:
-                if self.error_count < 3:
-                    print(f"Debug first 20 bytes: {self.recv_buffer[:20].hex()}")
-
-            if not self.synced and len(self.recv_buffer) >= 100:
+                # 在缓冲区中搜索同步模式
                 idx = self.recv_buffer.find(sync_pattern)
                 if idx >= 0:
                     self.recv_buffer = self.recv_buffer[idx:]
                     self.synced = True
                     if self.error_count < 3:
-                        print(f"Debug sync offset {idx} bytes")
-                else:
-                    discard = len(self.recv_buffer) // 2
-                    self.recv_buffer = self.recv_buffer[discard:]
+                        print(f"Synced at offset {idx}")
+                elif len(self.recv_buffer) > 2000:
+                    # 缓冲区过大但未找到同步模式，丢弃后半部分
+                    self.recv_buffer = self.recv_buffer[-1000:]
 
             while len(self.recv_buffer) >= expected_length:
                 packet = self.recv_buffer[:expected_length]
@@ -121,15 +119,38 @@ class FBGDemodulator:
                         if data_length == 960:
                             self.recv_buffer = self.recv_buffer[expected_length:]
                             self.packet_count += 1
+                            # 成功解析数据，错误计数重置
+                            if self.error_count > 0:
+                                self.error_count = max(0, self.error_count - 1)
                             return self.parse_wavelength_data(packet)
                         else:
+                            self.error_count += 1
+                            # 数据长度不匹配，尝试快速重新同步
                             if self.error_count < 3:
                                 print(f"WARN Data length mismatch, expected 960, got {data_length}")
-                            self.error_count += 1
-                            self.recv_buffer = self.recv_buffer[1:]
+                            # 连续错误时重新搜索同步模式
+                            if self.error_count >= 3:
+                                self.synced = False
+                                self.recv_buffer = self.recv_buffer[8:]
+                            else:
+                                self.recv_buffer = self.recv_buffer[1:]
                             continue
                     else:
-                        self.recv_buffer = self.recv_buffer[1:]
+                        # 同步模式不匹配，尝试快速重新同步
+                        self.error_count += 1
+                        if self.error_count >= 5:
+                            # 连续错误，重新同步
+                            self.synced = False
+                            # 在剩余缓冲区中搜索同步模式
+                            idx = self.recv_buffer[1:].find(sync_pattern)
+                            if idx >= 0:
+                                self.recv_buffer = self.recv_buffer[idx + 1:]
+                                self.synced = True
+                                self.error_count = 0
+                            else:
+                                self.recv_buffer = self.recv_buffer[1:]
+                        else:
+                            self.recv_buffer = self.recv_buffer[1:]
                         continue
 
             return None
@@ -142,6 +163,9 @@ class FBGDemodulator:
         except Exception as e:
             print(f"Receive failed: {e}")
             self.error_count += 1
+            # 连续错误时重新同步
+            if self.error_count >= 5:
+                self.synced = False
             return None
 
     def parse_wavelength_data(self, data):
@@ -186,7 +210,8 @@ class DataLogger:
 
     def start(self):
         """开始记录"""
-        self.start_time = time.time()
+        # start_time 将在第一个数据包成功记录时设置
+        self.start_time = None
         try:
             self.csv_file = open(self.filename, 'w', newline='', encoding='utf-8-sig')
             self.csv_writer = csv.writer(self.csv_file)
@@ -217,6 +242,10 @@ class DataLogger:
 
         if self.selected_channel >= len(wavelengths):
             return
+
+        # 第一次成功记录数据时设置开始时间
+        if self.start_time is None:
+            self.start_time = time.time()
 
         # 获取选定通道的第一个波长值
         raw_value = wavelengths[self.selected_channel][0]
