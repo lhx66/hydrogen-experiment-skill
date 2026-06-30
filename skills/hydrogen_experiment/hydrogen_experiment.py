@@ -731,7 +731,7 @@ class HydrogenExperimentSkill:
                 # 实验程序只负责产出CSV；分析和绘图由agent调用独立脚本完成。
 
                 # 循环间隔（非最后一次循环时等待）
-                if cycle < loop_count:
+                if cycle < loop_count - 1:
                     print(f"  Wait interval: {loop_interval} s")
                     self._sleep_with_abort(loop_interval, experiment_path)
 
@@ -895,7 +895,7 @@ class HydrogenExperimentSkill:
                     results['error'] = cycle_result.get('error', 'Experiment aborted')
                     break
 
-                if cycle < loop_count:
+                if cycle < loop_count - 1:
                     print(f"  Wait interval: {loop_interval} s")
                     self._sleep_with_abort(loop_interval, experiment_path)
 

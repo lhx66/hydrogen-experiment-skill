@@ -2,6 +2,26 @@
 
 本文件只记录 agent 需要调用的命令。优先按 `SKILL.md` 的阶段走；这里只在需要完整命令或排查入口时读取。
 
+## 安装后的脚本路径
+
+本 skill 安装后，脚本路径取决于运行平台：
+
+**Claude Code (Windows):**
+```
+C:\Users\<用户>\.claude\skills\hydrogen-experiment\
+```
+
+**Codex (Windows):**
+```
+C:\Users\<用户>\.codex\skills\hydrogen-experiment\
+```
+
+**Linux/Mac 对应路径:**
+- Claude Code: `~/.claude/skills/hydrogen-experiment/`
+- Codex: `~/.codex/skills/hydrogen-experiment/`
+
+Agent 应根据当前运行环境选择正确的路径。以下命令示例中的 `cli_tools/` 和 `analysis/` 均相对于上述安装根目录。
+
 ## 总程序
 
 常规实验只用总程序编排硬件流程。**agent 解析用户自然语言后自行拼接参数；不要把自然语言句子作为 CLI 位置参数传入**。

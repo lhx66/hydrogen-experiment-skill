@@ -353,11 +353,17 @@ call :remove_dir "%USERPROFILE%\.cursor\rules\%SKILL_DIR_NAME%"
 exit /b 0
 
 :remove_dir
-if exist "%~1" rmdir /s /q "%~1"
+if exist "%~1" (
+    echo   [REMOVE] Directory: %~1
+    rmdir /s /q "%~1"
+)
 exit /b 0
 
 :remove_file
-if exist "%~1" del /f /q "%~1"
+if exist "%~1" (
+    echo   [REMOVE] File: %~1
+    del /f /q "%~1"
+)
 exit /b 0
 
 :maybe_pause
