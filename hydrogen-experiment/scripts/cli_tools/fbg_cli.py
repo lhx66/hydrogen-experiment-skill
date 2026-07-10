@@ -213,6 +213,12 @@ class DataLogger:
         # start_time 将在第一个数据包成功记录时设置
         self.start_time = None
         try:
+            # 确保父目录存在
+            from pathlib import Path
+            file_path = Path(self.filename)
+            if file_path.parent != Path('.'):
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+
             self.csv_file = open(self.filename, 'w', newline='', encoding='utf-8-sig')
             self.csv_writer = csv.writer(self.csv_file)
             self.csv_writer.writerow(['Timestamp', 'Relative_Time(s)', 'Wavelength(nm)', 'Channel'])

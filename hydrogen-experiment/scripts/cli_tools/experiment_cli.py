@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
-ROOT = Path(__file__).resolve().parents[1]
-SKILL_DIR = ROOT / "skills" / "hydrogen_experiment"
+ROOT = Path(__file__).resolve().parents[2]
+SKILL_DIR = ROOT
 STATE_FILE = Path.home() / ".hydrogen_experiment_skill_state.json"
 DEFAULT_MFC2_STABILIZE_TIME = 5
 DEFAULT_RECOVERY_TIME = 30

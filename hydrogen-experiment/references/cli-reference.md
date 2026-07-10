@@ -134,7 +134,7 @@ FBG 单独采集排查，默认固定 `192.168.1.1:1000`、通道 1：
 python cli_tools/fbg_cli.py start --duration 70 --filename test_fbg --channel 1
 ```
 
-功率计排查，默认固定 `TCPIP0::192.169.1.102::inst0::INSTR`：
+功率计排查，默认固定 `TCPIP0::192.168.1.102::inst0::INSTR`：
 
 ```bash
 python cli_tools/powermeter_cli.py list

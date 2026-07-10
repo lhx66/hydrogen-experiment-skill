@@ -70,7 +70,7 @@ echo.
 echo [2/6] Preparing project files...
 call :cleanup_old_skill
 
-if exist "%LAUNCH_DIR%\skills\%SKILL_DIR_NAME%\SKILL.md" (
+if exist "%LAUNCH_DIR%\hydrogen-experiment\SKILL.md" (
     set "PROJECT_DIR=%LAUNCH_DIR%"
     echo [OK]    Local install: %LAUNCH_DIR%
 ) else (
@@ -136,7 +136,7 @@ if exist "%LAUNCH_DIR%\skills\%SKILL_DIR_NAME%\SKILL.md" (
 )
 
 set "SCRIPT_DIR=%PROJECT_DIR%"
-set "SKILLS_DIR=%PROJECT_DIR%\skills\%SKILL_DIR_NAME%"
+set "SKILLS_DIR=%PROJECT_DIR%\hydrogen-experiment"
 set "REQUIREMENTS_FILE=%PROJECT_DIR%\requirements.txt"
 
 REM ========================================
@@ -201,14 +201,13 @@ REM 创建环境设置脚本
 echo @echo off
 echo REM CLI tool environment setup
 echo.
-echo set "PYTHONPATH=%%PYTHONPATH%%;%SCRIPT_DIR%%\cli_tools"
-echo set "PYTHONPATH=%%PYTHONPATH%%;%SCRIPT_DIR%%\analysis"
-echo set "PYTHONPATH=%%PYTHONPATH%%;%SCRIPT_DIR%%\skills"
-echo set "PATH=%%PATH%%;%SCRIPT_DIR%%\cli_tools"
-) > "%SCRIPT_DIR%\cli_tools\env_setup.bat"
+echo set "PYTHONPATH=%%PYTHONPATH%%;%SCRIPT_DIR%%\hydrogen-experiment\scripts\cli_tools"
+echo set "PYTHONPATH=%%PYTHONPATH%%;%SCRIPT_DIR%%\hydrogen-experiment\scripts\analysis"
+echo set "PATH=%%PATH%%;%SCRIPT_DIR%%\hydrogen-experiment\scripts\cli_tools"
+) > "%SCRIPT_DIR%\hydrogen-experiment\scripts\cli_tools\env_setup.bat"
 
 echo [OK]    CLI environment ready
-echo         Run: cli_tools\env_setup.bat
+echo         Run: hydrogen-experiment\scripts\cli_tools\env_setup.bat
 
 if exist "%USERPROFILE%\.claude" call :copy_skill "%USERPROFILE%\.claude\skills\%SKILL_NAME%" "Claude Code"
 if exist "%USERPROFILE%\.codex" call :copy_skill "%USERPROFILE%\.codex\skills\%SKILL_NAME%" "Codex"
@@ -249,8 +248,8 @@ echo.
 echo Recommended dry-run:
 echo ```batch
 echo cd /d "%PROJECT_DIR%"
-echo cli_tools\env_setup.bat
-echo python cli_tools\experiment_cli.py run --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --instrument powermeter --loop-count 10 --step h2:4:40 --dry-run
+echo hydrogen-experiment\cli_tools\env_setup.bat
+echo python hydrogen-experiment\scripts\cli_tools\experiment_cli.py run --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --instrument powermeter --loop-count 10 --step h2:4:40 --dry-run
 echo ```
     ) > "%COMMANDS_DIR%\%COMMAND_NAME%.md"
 
@@ -287,8 +286,8 @@ echo.
 echo Recommended dry-run:
 echo ```batch
 echo cd /d "%PROJECT_DIR%"
-echo cli_tools\env_setup.bat
-echo python cli_tools\experiment_cli.py run --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --instrument powermeter --loop-count 10 --step h2:4:40 --dry-run
+echo hydrogen-experiment\cli_tools\env_setup.bat
+echo python hydrogen-experiment\scripts\cli_tools\experiment_cli.py run --output-folder "E:\experiments\2026-06-17_sensor_A" --mfc-port COM3 --sensor-name sensor_A --instrument powermeter --loop-count 10 --step h2:4:40 --dry-run
 echo ```
     ) > "%CODEX_COMMANDS_DIR%\%COMMAND_NAME%.md"
 
@@ -315,7 +314,7 @@ echo Environment setup:
 echo   Before first use, set PYTHONPATH:
 echo.
 echo   cd /d "%SCRIPT_DIR%"
-echo   cli_tools\env_setup.bat
+echo   hydrogen-experiment\cli_tools\env_setup.bat
 echo.
 echo Skill path: %SKILLS_DIR%
 echo.

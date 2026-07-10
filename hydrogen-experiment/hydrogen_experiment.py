@@ -17,31 +17,34 @@ import time
 import json
 import subprocess
 import threading
+import atexit
+import signal
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 
 # 添加cli_tools目录到路径
-cli_tools_dir = Path(__file__).parent.parent.parent / "cli_tools"
+cli_tools_dir = Path(__file__).parent / "scripts" / "cli_tools"
 sys.path.insert(0, str(cli_tools_dir))
 
 # 添加analysis目录到路径
-analysis_dir = Path(__file__).parent.parent.parent / "analysis"
+analysis_dir = Path(__file__).parent / "scripts" / "analysis"
 sys.path.insert(0, str(analysis_dir))
 
 try:
-    from analyze_sensor_response import analyze_sensor_data, batch_analyze, plot_response_curve, plot_multiple_cycles
+    from analyze_sensor_response import analyze_sensor_data, batch_analyze, plot_response_curve, plot_multiple_cycles  # type: ignore
 except ImportError:
     print("WARN Analysis module unavailable")
 
 try:
-    from mfc_cli import MFCController
+    from mfc_cli import MFCController  # type: ignore
 except ImportError:
     print("WARN MFC module unavailable")
     MFCController = None
 
 try:
-    from fbg_cli import FBGDemodulator
+    from fbg_cli import FBGDemodulator  # type: ignore
 except ImportError:
     print("WARN FBG module unavailable")
     FBGDemodulator = None
@@ -51,10 +54,64 @@ DEFAULT_MFC2_FLOW_SLM = 1.0
 DEFAULT_FBG_IP = '192.168.1.1'
 DEFAULT_FBG_PORT = 1000
 DEFAULT_FBG_CHANNEL = 1
-DEFAULT_POWERMETER_RESOURCE = 'TCPIP0::192.169.1.102::inst0::INSTR'
+DEFAULT_POWERMETER_RESOURCE = 'TCPIP0::192.168.1.102::inst0::INSTR'
 DEFAULT_PRE_H2_DELAY_S = 5
 HIGH_CONCENTRATION_AUTH_LIMIT_PERCENT = 4.0
 STOP_REQUEST_FILENAME = '.hydrogen_experiment_stop.json'
+
+# ==================== 全局安全清理机制 ====================
+# 确保在任何退出情况下（包括Ctrl+C和终止信号）都能关闭MFC1
+
+_cleanup_callback = None
+_pid_for_cleanup = None
+
+
+def _register_cleanup(callback):
+    """注册清理回调函数"""
+    global _cleanup_callback, _pid_for_cleanup
+    _cleanup_callback = callback
+    _pid_for_cleanup = os.getpid()
+
+
+def _execute_cleanup():
+    """执行清理：关闭MFC1和MFC2，释放串口"""
+    global _cleanup_callback
+    if _cleanup_callback:
+        try:
+            _cleanup_callback()
+        except Exception as e:
+            # 清理过程中的错误不应该抛出
+            try:
+                print(f"[Cleanup Error] {e}", file=sys.stderr)
+            except:
+                pass
+
+
+def _signal_handler(signum, frame):
+    """信号处理器：捕获SIGINT和SIGTERM"""
+    try:
+        print(f"\n[Safety] Received signal {signum}, closing MFC1...")
+    except:
+        pass
+    _execute_cleanup()
+    # 恢复默认处理并重新发送信号
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+
+
+# 注册atexit处理器（在任何正常退出时执行）
+atexit.register(_execute_cleanup)
+
+# 注册信号处理器（捕获Ctrl+C和终止信号）
+# Windows: SIGINT (Ctrl+C), SIGBREAK
+# Unix: SIGINT (Ctrl+C), SIGTERM (kill命令)
+if sys.platform == 'win32':
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGBREAK, _signal_handler)
+else:
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+# ==================== 全局安全清理机制结束 ====================
 
 
 class ExperimentAborted(Exception):
@@ -204,8 +261,9 @@ def build_experiment_file_stem(sensor_name: str,
                                instrument: Optional[str] = None,
                                fbg_channel: Optional[int] = None,
                                cycle: Optional[int] = None,
-                               suffix: Optional[str] = None) -> str:
-    """构造不带时间戳、包含关键实验信息的文件名主体。"""
+                               suffix: Optional[str] = None,
+                               timestamp: Optional[str] = None) -> str:
+    """构造包含关键实验信息与时间戳的文件名主体。"""
     parts = [
         _safe_filename_part(sensor_name),
         f"H2-{_safe_filename_part(concentration)}",
@@ -228,6 +286,8 @@ def build_experiment_file_stem(sensor_name: str,
         parts.append(f"cycle{int(cycle):02d}")
     if suffix:
         parts.append(_safe_filename_part(suffix))
+    if timestamp:
+        parts.append(timestamp)
 
     return '_'.join(parts)
 
@@ -301,7 +361,8 @@ def build_sequence_file_stem(sensor_name: str,
                              instrument: Optional[str] = None,
                              fbg_channel: Optional[int] = None,
                              cycle: Optional[int] = None,
-                             suffix: Optional[str] = None) -> str:
+                             suffix: Optional[str] = None,
+                             timestamp: Optional[str] = None) -> str:
     parts = [
         _safe_filename_part(sensor_name),
         build_flow_sequence_label(flow_steps),
@@ -319,6 +380,8 @@ def build_sequence_file_stem(sensor_name: str,
         parts.append(f"cycle{int(cycle):02d}")
     if suffix:
         parts.append(_safe_filename_part(suffix))
+    if timestamp:
+        parts.append(timestamp)
     return '_'.join(parts)
 
 
@@ -335,7 +398,7 @@ class HydrogenExperimentSkill:
     """光纤氢气传感器实验自动化skill"""
 
     def __init__(self, output_folder: Optional[str] = None):
-        self.cli_tools_dir = Path(__file__).parent.parent.parent / "cli_tools"
+        self.cli_tools_dir = Path(__file__).parent / "scripts" / "cli_tools"
         self.mfc_cli_path = self.cli_tools_dir / "mfc_cli.py"
         self.powermeter_cli = self.cli_tools_dir / "powermeter_cli.py"
         self.fbg_cli = self.cli_tools_dir / "fbg_cli.py"
@@ -349,12 +412,20 @@ class HydrogenExperimentSkill:
 
         # 实验状态
         self.current_experiment = None
+        self._cleaned_up = False  # 防止 cleanup 重复执行
         self.mfc_controller = None  # 直接使用MFCController实例，保持长连接
+        self.experiment_timestamp = None  # 实验开始时间戳，用于文件名
+        self._safety_window_info = ''
+        self._safety_window_status = ''
         self.data_process = None
         self.active_data_process = None
         self.stop_requested = False
         self.stop_reason = None
         self.cycle_plots = []  # 存储每次循环的图表
+        self.mfc_port = None  # 记录MFC串口，用于紧急停止
+
+        # 注册全局清理回调（确保进程退出时关闭MFC）
+        _register_cleanup(self._cleanup)
 
     def request_stop(self, reason="User requested stop") -> None:
         """Request immediate experiment stop and close MFC1."""
@@ -370,6 +441,125 @@ class HydrogenExperimentSkill:
                     pass
         if self.active_data_process:
             self._terminate_data_process(self.active_data_process)
+
+    def print_emergency_stop_info(self) -> None:
+        """打印紧急停止信息，包括终止进程的命令（注意：不用/F强制杀，这会阻止cleanup）"""
+        pid = os.getpid()
+        print("=" * 60)
+        print("[Safety] Emergency Stop Information")
+        print("=" * 60)
+        print(f"Experiment PID: {pid}")
+        print(f"To IMMEDIATELY close hydrogen, run:")
+        print()
+        if sys.platform == 'win32':
+            print(f"  taskkill /PID {pid}")
+            print()
+            print("Or by name (Git Bash):")
+            print("  pkill -f experiment_cli")
+        else:
+            print(f"  kill -SIGTERM {pid}")
+        print()
+        print("The program will catch the signal, close MFC1/MFC2,")
+        print("and release the serial port before exiting.")
+        print()
+        print("DO NOT use taskkill /F or kill -9 — those skip cleanup.")
+        print("=" * 60)
+        print()
+
+    def _start_keyboard_monitor(self) -> None:
+        """启动键盘监控线程，按 q 或 ESC 可安全中止实验"""
+        try:
+            import msvcrt
+        except ImportError:
+            return  # 非 Windows 平台不做键盘监控
+
+        def _monitor():
+            while not self.stop_requested:
+                if msvcrt.kbhit():
+                    ch = msvcrt.getch()
+                    if ch in (b'q', b'Q') or ch == b'\x1b':
+                        self.stop_requested = True
+                        self.stop_reason = 'User pressed Q/ESC'
+                        print("\n[Keyboard] Q/ESC pressed, stopping experiment...")
+                        break
+                time.sleep(0.1)
+
+        t = threading.Thread(target=_monitor, daemon=True)
+        t.start()
+
+    def _create_safety_window(self, experiment_info: str) -> None:
+        """创建安全控制窗口，显示实验信息，接受 Q/ESC 按键停止实验"""
+        try:
+            import tkinter as tk
+        except ImportError:
+            return
+
+        self._safety_window_info = experiment_info
+        self._safety_window_status = "Starting..."
+
+        def _win_thread():
+            try:
+                root = tk.Tk()
+                root.title("⚠ H2 Safety")
+                root.attributes('-topmost', True)
+                root.protocol("WM_DELETE_WINDOW", lambda: None)  # 禁止关闭
+
+                # 窗口尺寸与位置（屏幕左下角）
+                win_w, win_h = 320, 150
+                screen_h = root.winfo_screenheight()
+                root.geometry(f"{win_w}x{win_h}+0+{screen_h - win_h - 60}")
+                root.resizable(False, False)
+
+                # 实验信息
+                tk.Label(root, text="Hydrogen Experiment", font=("Arial", 9, "bold")).pack(pady=(4,0))
+                info_var = tk.StringVar()
+                info_label = tk.Label(root, textvariable=info_var, wraplength=300, justify="left",
+                                      font=("Arial", 8))
+                info_label.pack(pady=(2,0))
+
+                status_var = tk.StringVar(value=self._safety_window_status)
+                status_label = tk.Label(root, textvariable=status_var, fg="blue", font=("Arial", 8))
+                status_label.pack(pady=(2,0))
+
+                # 停止按钮
+                stop_btn = tk.Button(root, text="Q / ESC = STOP EXPERIMENT",
+                                     fg="white", bg="red", font=("Arial", 9, "bold"),
+                                     command=lambda: self._safety_stop_from_window('Button'))
+                stop_btn.pack(pady=(4,2), fill="x", padx=8)
+
+                # 按键绑定
+                def on_key(event):
+                    if event.char.lower() == 'q' or event.keysym == 'Escape':
+                        self._safety_stop_from_window('Key')
+
+                root.bind('<Key>', on_key)
+                root.focus_force()
+
+                # 定期更新状态并检查实验是否结束
+                def _poll():
+                    if self._cleaned_up or (self.stop_requested and self.mfc_controller is None):
+                        root.destroy()
+                        return
+                    info_var.set(self._safety_window_info)
+                    if self.stop_requested:
+                        status_var.set("STOPPING...")
+                    else:
+                        status_var.set(self._safety_window_status)
+                    root.after(500, _poll)
+
+                root.after(500, _poll)
+                root.mainloop()
+            except Exception:
+                pass  # 窗口不是必需的，静默失败
+
+        t = threading.Thread(target=_win_thread, daemon=True)
+        t.start()
+
+    def _safety_stop_from_window(self, source: str) -> None:
+        """从安全窗口触发停止"""
+        self.stop_requested = True
+        self.stop_reason = f'User pressed Q/ESC ({source})'
+        print(f"\n[Safety Window] STOP requested ({source})")
 
     def _handle_mfc_safety_stop(self, event_type, value) -> None:
         if event_type == 'mfc2_low':
@@ -459,6 +649,7 @@ class HydrogenExperimentSkill:
         else:
             status = 'failed'
 
+        self._safety_window_status = f"Cycle {cycle}/{loop_count} done ({status})"
         parts = [f"Progress: cycle {cycle}/{loop_count} done status={status}"]
         data_file = cycle_result.get('data_file')
         if data_file:
@@ -617,19 +808,8 @@ class HydrogenExperimentSkill:
         if total_duration is None:
             total_duration = h2_time + 30  # 默认记录时长包含预记录、通氢和恢复
 
-        # 创建实验目录。目录不再追加时间戳，日期通常由用户指定的父文件夹承载。
-        experiment_name = build_experiment_file_stem(
-            sensor_name=sensor_name,
-            concentration=concentration,
-            h2_flow=h2_flow,
-            mfc2_flow=mfc2_flow,
-            h2_time=h2_time,
-            total_duration=total_duration,
-            instrument=instrument,
-            fbg_channel=fbg_channel,
-        )
-        experiment_path = self.experiment_dir / experiment_name
-        experiment_path.mkdir(exist_ok=True)
+        # 直接使用用户指定的输出目录，不再创建额外子目录
+        experiment_path = self.experiment_dir
 
         print("=" * 60)
         print("Hydrogen sensor experiment")
@@ -676,6 +856,14 @@ class HydrogenExperimentSkill:
         self.stop_requested = False
         self.stop_reason = None
         self._clear_stop_requests(experiment_path)
+        self._cleaned_up = False  # 防止 cleanup 重复执行
+        self.experiment_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        # 打印紧急停止信息
+        self.print_emergency_stop_info()
+        print("[Keyboard] Press Q or ESC to stop experiment safely")
+        self._start_keyboard_monitor()
+        self._create_safety_window(f"{sensor_name} | {concentration} | {loop_count} cycles")
 
         try:
             # 连接MFC（使用MFCController直接连接，保持长连接）
@@ -698,6 +886,7 @@ class HydrogenExperimentSkill:
                 self._check_abort(experiment_path)
                 print(f"\n--- Cycle {cycle}/{loop_count} ---")
                 print(f"Progress: cycle {cycle}/{loop_count} start", flush=True)
+                self._safety_window_status = f"Cycle {cycle}/{loop_count} running..."
 
                 cycle_result = self._run_single_cycle(
                     cycle=cycle,
@@ -735,10 +924,6 @@ class HydrogenExperimentSkill:
                     print(f"  Wait interval: {loop_interval} s")
                     self._sleep_with_abort(loop_interval, experiment_path)
 
-            # 关闭所有设备
-            print("\n[4/4] Close devices...")
-            self._cleanup()
-
             if results.get('aborted'):
                 print(f"\nABORT {results.get('error', 'Experiment aborted')}")
             else:
@@ -757,13 +942,15 @@ class HydrogenExperimentSkill:
         except ExperimentAborted as e:
             print(f"\nABORT {e}")
             self.request_stop(str(e))
-            self._cleanup()
             results['aborted'] = True
             results['error'] = str(e)
         except Exception as e:
             print(f"\nFAIL Experiment failed: {e}")
-            self._cleanup()
             results['error'] = str(e)
+        finally:
+            # finally 确保任何退出路径（包括 KeyboardInterrupt）都执行 cleanup
+            print("\n[Cleanup] Close devices...")
+            self._cleanup()
 
         return results
 
@@ -801,15 +988,8 @@ class HydrogenExperimentSkill:
             total_duration = sequence_duration + 30
 
         sequence_label = build_flow_sequence_label(flow_steps)
-        experiment_name = build_sequence_file_stem(
-            sensor_name=sensor_name,
-            flow_steps=flow_steps,
-            mfc2_flow=mfc2_flow,
-            total_duration=total_duration,
-            instrument=instrument,
-            fbg_channel=fbg_channel,
-        )
-        experiment_path = self.experiment_dir / experiment_name
+        # 直接使用用户指定的输出目录，不再创建额外子目录
+        experiment_path = self.experiment_dir
 
         results = {
             'sensor_name': sensor_name,
@@ -846,11 +1026,17 @@ class HydrogenExperimentSkill:
             print(f"FAIL {results['error']}")
             return results
 
-        experiment_path.mkdir(exist_ok=True)
         self.cycle_plots = []
         self.stop_requested = False
         self.stop_reason = None
         self._clear_stop_requests(experiment_path)
+        self.experiment_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        # 打印紧急停止信息
+        self.print_emergency_stop_info()
+        print("[Keyboard] Press Q or ESC to stop experiment safely")
+        self._start_keyboard_monitor()
+        self._create_safety_window(f"{sensor_name} | {sequence_label} | {loop_count} cycles")
 
         try:
             print("\n[1/4] Connect MFC...")
@@ -870,6 +1056,7 @@ class HydrogenExperimentSkill:
                 self._check_abort(experiment_path)
                 print(f"\n--- Cycle {cycle}/{loop_count} ---")
                 print(f"Progress: cycle {cycle}/{loop_count} start", flush=True)
+                self._safety_window_status = f"Cycle {cycle}/{loop_count} running..."
                 cycle_result = self._run_sequence_cycle(
                     cycle=cycle,
                     experiment_path=experiment_path,
@@ -899,8 +1086,6 @@ class HydrogenExperimentSkill:
                     print(f"  Wait interval: {loop_interval} s")
                     self._sleep_with_abort(loop_interval, experiment_path)
 
-            print("\n[4/4] Close devices...")
-            self._cleanup()
             if results.get('aborted'):
                 print(f"\nABORT {results.get('error', 'Experiment aborted')}")
             else:
@@ -918,13 +1103,15 @@ class HydrogenExperimentSkill:
         except ExperimentAborted as e:
             print(f"\nABORT {e}")
             self.request_stop(str(e))
-            self._cleanup()
             results['aborted'] = True
             results['error'] = str(e)
         except Exception as e:
             print(f"\nFAIL Experiment failed: {e}")
-            self._cleanup()
             results['error'] = str(e)
+        finally:
+            # finally 确保任何退出路径（包括 KeyboardInterrupt）都执行 cleanup
+            print("\n[Cleanup] Close devices...")
+            self._cleanup()
 
         return results
 
@@ -959,6 +1146,7 @@ class HydrogenExperimentSkill:
                 instrument=results.get('instrument'),
                 fbg_channel=results.get('fbg_channel'),
                 suffix='results',
+                timestamp=self.experiment_timestamp,
             )
             result_file = experiment_path / f"{result_stem}.json"
             results['result_file'] = str(result_file)
@@ -984,6 +1172,8 @@ class HydrogenExperimentSkill:
             self.mfc_controller = MFCController()
             if not self.mfc_controller.connect(port, baudrate=9600):
                 return False
+            # 记录MFC串口，用于紧急停止
+            self.mfc_port = port
 
             if hasattr(self.mfc_controller, 'set_safety_callback'):
                 self.mfc_controller.set_safety_callback(self._handle_mfc_safety_stop)
@@ -1044,13 +1234,23 @@ class HydrogenExperimentSkill:
             return False
 
     def _connect_powermeter(self, resource: str) -> bool:
-        """连接功率计"""
+        """连接功率计：检查设备是否可达"""
         try:
-            result = subprocess.run(
-                [sys.executable, str(self.powermeter_cli), 'list'],
-                capture_output=True, text=True, timeout=10
-            )
-            print(result.stdout)
+            # 提取IP地址检查连通性
+            import re
+            ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', resource)
+            if ip_match:
+                ip = ip_match.group(1)
+                import socket
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(3)
+                result = sock.connect_ex((ip, 5025))
+                sock.close()
+                if result != 0:
+                    print(f"ERROR Powermeter at {ip}:5025 not reachable")
+                    print(f"  Check: device power, network cable, IP address")
+                    return False
+                print(f"OK Powermeter {ip} reachable")
             return True
         except Exception as e:
             print(f"Powermeter connect error: {e}")
@@ -1094,6 +1294,7 @@ class HydrogenExperimentSkill:
             instrument=instrument,
             fbg_channel=fbg_channel,
             cycle=cycle,
+            timestamp=self.experiment_timestamp,
         )
         data_file = experiment_path / f"{filename}.csv"
         cycle_result = {
@@ -1195,8 +1396,15 @@ class HydrogenExperimentSkill:
                     print(f"  WARN acquisition exit code {return_code}")
 
             actual_data_file = self._find_generated_csv(experiment_path, filename)
-            cycle_result['data_file'] = str(actual_data_file or data_file)
-            cycle_result['success'] = True
+            if actual_data_file:
+                cycle_result['data_file'] = str(actual_data_file)
+                cycle_result['success'] = True
+            else:
+                # 文件未被采集进程创建，报告缺失并标记失败
+                print(f"  WARN CSV file not found: {data_file}")
+                cycle_result['data_file'] = str(data_file)
+                cycle_result['success'] = False
+                cycle_result['error'] = 'CSV file was not created by acquisition process'
 
         except ExperimentAborted as e:
             print(f"\n  ABORT {e}")
@@ -1251,6 +1459,7 @@ class HydrogenExperimentSkill:
             instrument=instrument,
             fbg_channel=fbg_channel,
             cycle=cycle,
+            timestamp=self.experiment_timestamp,
         )
         cycle_result = {
             'cycle': cycle,
@@ -1330,8 +1539,15 @@ class HydrogenExperimentSkill:
                     print(f"  WARN acquisition exit code {return_code}")
 
             actual_data_file = self._find_generated_csv(experiment_path, filename)
-            cycle_result['data_file'] = str(actual_data_file or data_file)
-            cycle_result['success'] = True
+            if actual_data_file:
+                cycle_result['data_file'] = str(actual_data_file)
+                cycle_result['success'] = True
+            else:
+                # 文件未被采集进程创建，报告缺失并标记失败
+                print(f"  WARN CSV file not found: {data_file}")
+                cycle_result['data_file'] = str(data_file)
+                cycle_result['success'] = False
+                cycle_result['error'] = 'CSV file was not created by acquisition process'
 
         except ExperimentAborted as e:
             print(f"\n  ABORT {e}")
@@ -1361,14 +1577,19 @@ class HydrogenExperimentSkill:
                                       filename: str,
                                       duration: int,
                                       resource: str = DEFAULT_POWERMETER_RESOURCE) -> subprocess.Popen:
-        """启动功率计采集"""
+        """启动功率计采集，stderr 捕获到管道以便诊断"""
         cmd = [
             sys.executable, str(self.powermeter_cli), 'start',
             '--resource', resource,
             '--duration', str(duration),
             '--filename', filename
         ]
-        return subprocess.Popen(cmd)
+        return subprocess.Popen(cmd,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                encoding='utf-8',
+                                errors='replace')
 
     def _start_fbg_acquisition(self,
                                filename: str,
@@ -1376,7 +1597,7 @@ class HydrogenExperimentSkill:
                                fbg_ip: str = DEFAULT_FBG_IP,
                                fbg_port: int = DEFAULT_FBG_PORT,
                                channel: int = DEFAULT_FBG_CHANNEL) -> subprocess.Popen:
-        """启动FBG采集"""
+        """启动FBG采集，stderr 捕获到管道以便诊断"""
         cmd = [
             sys.executable, str(self.fbg_cli), 'start',
             '--ip', fbg_ip,
@@ -1385,12 +1606,25 @@ class HydrogenExperimentSkill:
             '--filename', filename,
             '--channel', str(channel)
         ]
-        return subprocess.Popen(cmd)
+        return subprocess.Popen(cmd,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                encoding='utf-8',
+                                errors='replace')
 
     def _wait_for_data_process(self, process: subprocess.Popen, timeout: int = 15) -> Optional[int]:
-        """等待采集进程完成；超时则交给调用方清理。"""
+        """等待采集进程完成；超时则交给调用方清理。捕获stderr用于诊断。"""
         try:
-            return process.wait(timeout=timeout)
+            return_code = process.wait(timeout=timeout)
+            # 读取 stderr 诊断信息
+            try:
+                stderr_output = process.stderr.read() if process.stderr else ''
+                if stderr_output and stderr_output.strip():
+                    print(f"  [采集进程stderr] {stderr_output.strip()}")
+            except Exception:
+                pass
+            return return_code
         except subprocess.TimeoutExpired:
             return None
 
@@ -1408,19 +1642,25 @@ class HydrogenExperimentSkill:
         return matches[0] if matches else None
 
     def _cleanup(self):
-        """清理资源"""
+        """清理资源：关闭MFC1和MFC2，释放串口（幂等）"""
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
         if self.mfc_controller:
             try:
                 # 关闭所有MFC
+                print("[Safety] Closing MFC1 (hydrogen)...")
                 self.mfc_controller.set_flow(self.mfc_controller.addresses[0], 0)
                 time.sleep(0.3)
+                print("[Safety] Closing MFC2 (carrier)...")
                 self.mfc_controller.set_flow(self.mfc_controller.addresses[1], 0)
                 time.sleep(0.3)
-                # 断开连接
+                # 断开连接（释放串口）
+                print("[Safety] Releasing serial port...")
                 self.mfc_controller.disconnect()
-                print("MFC closed")
+                print("[Safety] MFC closed, serial port released")
             except Exception as e:
-                print(f"MFC cleanup error: {e}")
+                print(f"[Safety] MFC cleanup error: {e}")
             finally:
                 self.mfc_controller = None
         else:

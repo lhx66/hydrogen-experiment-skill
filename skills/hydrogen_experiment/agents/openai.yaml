@@ -1,7 +1,0 @@
-interface:
-  display_name: "Hydrogen Experiment"
-  short_description: "Automate hydrogen sensor experiments"
-  default_prompt: "Use $hydrogen-experiment to plan and run a hydrogen sensor experiment safely."
-
-policy:
-  allow_implicit_invocation: true
